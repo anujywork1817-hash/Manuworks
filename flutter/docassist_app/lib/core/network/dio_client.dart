@@ -1,0 +1,403 @@
+import 'package:dio/dio.dart';
+import 'package:flutter/foundation.dart' show kIsWeb;
+import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:flutter_secure_storage/flutter_secure_storage.dart';
+import 'package:pretty_dio_logger/pretty_dio_logger.dart';
+import 'package:shared_preferences/shared_preferences.dart';
+
+// ─── Constants ────────────────────────────────────────────────────────────────
+
+class ApiConstants {
+  ApiConstants._();
+  //static const baseUrl = String.fromEnvironment('API_URL',
+     // defaultValue: 'http://localhost:8080/api/v1');
+
+     static const String baseUrl = 'http://192.168.1.12:8080/api/v1';
+
+
+  static const connectTimeout = Duration(seconds: 30);
+  static const receiveTimeout = Duration(seconds: 600);
+
+  // Storage keys
+  static const accessTokenKey = 'access_token';
+  static const refreshTokenKey = 'refresh_token';
+  static const userIdKey = 'user_id';
+  static const userEmailKey = 'user_email';
+  static const userRoleKey = 'user_role';
+}
+
+// ─── API Exception ────────────────────────────────────────────────────────────
+
+class ApiException implements Exception {
+  final String message;
+  final int? statusCode;
+  final String? code;
+
+  const ApiException({
+    required this.message,
+    this.statusCode,
+    this.code,
+  });
+
+  @override
+  String toString() => message;
+
+  bool get isUnauthorized => statusCode == 401;
+  bool get isNotFound => statusCode == 404;
+  bool get isServerError => statusCode != null && statusCode! >= 500;
+  bool get isNetworkError => statusCode == null;
+}
+
+// ─── Token Storage (web-safe) ─────────────────────────────────────────────────
+
+class TokenStorage {
+  static const _secure = FlutterSecureStorage(
+    aOptions: AndroidOptions(encryptedSharedPreferences: true),
+    iOptions: IOSOptions(accessibility: KeychainAccessibility.first_unlock),
+  );
+
+  static Future<void> _write(String key, String value) async {
+    if (kIsWeb) {
+      final prefs = await SharedPreferences.getInstance();
+      await prefs.setString(key, value);
+    } else {
+      await _secure.write(key: key, value: value);
+    }
+  }
+
+  static Future<String?> _read(String key) async {
+    if (kIsWeb) {
+      final prefs = await SharedPreferences.getInstance();
+      return prefs.getString(key);
+    } else {
+      return _secure.read(key: key);
+    }
+  }
+
+  static Future<void> _deleteAll() async {
+    if (kIsWeb) {
+      final prefs = await SharedPreferences.getInstance();
+      await prefs.clear();
+    } else {
+      await _secure.deleteAll();
+    }
+  }
+
+  static Future<void> saveTokens({
+    required String accessToken,
+    required String refreshToken,
+  }) async {
+    await Future.wait([
+      _write(ApiConstants.accessTokenKey, accessToken),
+      _write(ApiConstants.refreshTokenKey, refreshToken),
+    ]);
+  }
+
+  static Future<String?> getAccessToken() =>
+      _read(ApiConstants.accessTokenKey);
+
+  static Future<String?> getRefreshToken() =>
+      _read(ApiConstants.refreshTokenKey);
+
+  static Future<void> saveUserInfo({
+    required String userId,
+    required String email,
+    required String role,
+  }) async {
+    await Future.wait([
+      _write(ApiConstants.userIdKey, userId),
+      _write(ApiConstants.userEmailKey, email),
+      _write(ApiConstants.userRoleKey, role),
+    ]);
+  }
+
+  static Future<Map<String, String?>> getUserInfo() async {
+    final results = await Future.wait([
+      _read(ApiConstants.userIdKey),
+      _read(ApiConstants.userEmailKey),
+      _read(ApiConstants.userRoleKey),
+    ]);
+    return {
+      'userId': results[0],
+      'email': results[1],
+      'role': results[2],
+    };
+  }
+
+  static Future<void> clearAll() => _deleteAll();
+
+  static Future<bool> hasTokens() async {
+    final token = await getAccessToken();
+    return token != null && token.isNotEmpty;
+  }
+}
+
+// ─── Auth Interceptor ─────────────────────────────────────────────────────────
+
+class AuthInterceptor extends Interceptor {
+  final Dio _dio;
+  bool _isRefreshing = false;
+  final List<RequestOptions> _pendingRequests = [];
+
+  AuthInterceptor(this._dio);
+
+  @override
+  Future<void> onRequest(
+    RequestOptions options,
+    RequestInterceptorHandler handler,
+  ) async {
+    final path = options.path;
+    if (path.contains('/auth/login') ||
+        path.contains('/auth/register') ||
+        path.contains('/auth/refresh') ||
+        path.contains('/auth/forgot-password') ||
+        path.contains('/auth/reset-password')) {
+      return handler.next(options);
+    }
+
+    final token = await TokenStorage.getAccessToken();
+    if (token != null) {
+      options.headers['Authorization'] = 'Bearer $token';
+    }
+    handler.next(options);
+  }
+
+  @override
+  Future<void> onError(
+    DioException err,
+    ErrorInterceptorHandler handler,
+  ) async {
+    if (err.response?.statusCode == 401) {
+      if (_isRefreshing) {
+        _pendingRequests.add(err.requestOptions);
+        return;
+      }
+
+      _isRefreshing = true;
+
+      try {
+        final refreshToken = await TokenStorage.getRefreshToken();
+        if (refreshToken == null) {
+          await TokenStorage.clearAll();
+          return handler.next(err);
+        }
+
+        final response = await _dio.post(
+          '/auth/refresh',
+          data: {'refresh_token': refreshToken},
+          options: Options(headers: {'Authorization': ''}),
+        );
+
+        if (response.statusCode == 200) {
+          final data = response.data['data'];
+          await TokenStorage.saveTokens(
+            accessToken: data['access_token'],
+            refreshToken: data['refresh_token'],
+          );
+
+          final retryResponse = await _dio.fetch(err.requestOptions
+            ..headers['Authorization'] = 'Bearer ${data['access_token']}');
+          return handler.resolve(retryResponse);
+        }
+      } catch (_) {
+        await TokenStorage.clearAll();
+      } finally {
+        _isRefreshing = false;
+        _pendingRequests.clear();
+      }
+    }
+
+    handler.next(err);
+  }
+}
+
+// ─── Dio Client Factory ───────────────────────────────────────────────────────
+
+class DioClient {
+  static Dio? _instance;
+
+  static Dio get instance {
+    _instance ??= _createDio();
+    return _instance!;
+  }
+
+  static Dio _createDio() {
+    final dio = Dio(
+      BaseOptions(
+        baseUrl: ApiConstants.baseUrl,
+        connectTimeout: ApiConstants.connectTimeout,
+        receiveTimeout: ApiConstants.receiveTimeout,
+        headers: {
+          'Content-Type': 'application/json',
+          'Accept': 'application/json',
+        },
+        validateStatus: (status) => status != null && status < 500,
+      ),
+    );
+
+    dio.interceptors.add(AuthInterceptor(dio));
+
+    assert(() {
+      dio.interceptors.add(
+        PrettyDioLogger(
+          requestHeader: false,
+          requestBody: true,
+          responseBody: true,
+          responseHeader: false,
+          error: true,
+          compact: true,
+        ),
+      );
+      return true;
+    }());
+
+    return dio;
+  }
+
+  static Future<T> get<T>(
+    String path, {
+    Map<String, dynamic>? queryParams,
+    T Function(dynamic)? fromJson,
+  }) async {
+    try {
+      final response = await instance.get(path, queryParameters: queryParams);
+      return _handleResponse<T>(response, fromJson);
+    } on DioException catch (e) {
+      throw _handleDioError(e);
+    }
+  }
+
+  static Future<T> post<T>(
+    String path, {
+    dynamic data,
+    T Function(dynamic)? fromJson,
+  }) async {
+    try {
+      final response = await instance.post(path, data: data);
+      return _handleResponse<T>(response, fromJson);
+    } on DioException catch (e) {
+      throw _handleDioError(e);
+    }
+  }
+
+  static Future<T> put<T>(
+    String path, {
+    dynamic data,
+    T Function(dynamic)? fromJson,
+  }) async {
+    try {
+      final response = await instance.put(path, data: data);
+      return _handleResponse<T>(response, fromJson);
+    } on DioException catch (e) {
+      throw _handleDioError(e);
+    }
+  }
+
+  static Future<T> patch<T>(
+    String path, {
+    dynamic data,
+    T Function(dynamic)? fromJson,
+  }) async {
+    try {
+      final response = await instance.patch(path, data: data);
+      return _handleResponse<T>(response, fromJson);
+    } on DioException catch (e) {
+      throw _handleDioError(e);
+    }
+  }
+
+  static Future<T> delete<T>(
+    String path, {
+    T Function(dynamic)? fromJson,
+  }) async {
+    try {
+      final response = await instance.delete(path);
+      return _handleResponse<T>(response, fromJson);
+    } on DioException catch (e) {
+      throw _handleDioError(e);
+    }
+  }
+
+  static Future<Response> uploadFile(
+    String path,
+    FormData formData, {
+    void Function(int, int)? onSendProgress,
+  }) async {
+    try {
+      return await instance.post(
+        path,
+        data: formData,
+        onSendProgress: onSendProgress,
+        options: Options(contentType: 'multipart/form-data'),
+      );
+    } on DioException catch (e) {
+      throw _handleDioError(e);
+    }
+  }
+
+  static T _handleResponse<T>(
+    Response response,
+    T Function(dynamic)? fromJson,
+  ) {
+    final body = response.data;
+    final isSuccess = response.statusCode != null &&
+        response.statusCode! >= 200 &&
+        response.statusCode! < 300;
+
+    if (isSuccess) {
+      if (fromJson != null && body is Map && body['data'] != null) {
+        return fromJson(body['data']);
+      }
+      return body as T;
+    }
+
+    // body may be a String (HTML error page) or Map — guard both
+    final message = body is Map
+        ? ((body['message'] ?? body['error'] ?? 'Request failed').toString())
+        : 'Request failed (status ${response.statusCode})';
+    final code = body is Map ? body['code']?.toString() : null;
+
+    throw ApiException(
+      message: message,
+      statusCode: response.statusCode,
+      code: code,
+    );
+  }
+
+  static ApiException _handleDioError(DioException e) {
+    if (e.response != null) {
+      final body = e.response!.data;
+      return ApiException(
+        message: body is Map
+            ? (body['message'] ?? 'Request failed')
+            : 'Request failed',
+        statusCode: e.response!.statusCode,
+        code: body is Map ? body['code']?.toString() : null,
+      );
+    }
+
+    switch (e.type) {
+      case DioExceptionType.connectionTimeout:
+      case DioExceptionType.sendTimeout:
+      case DioExceptionType.receiveTimeout:
+        return const ApiException(
+          message: 'Connection timed out. Please try again.',
+          statusCode: null,
+        );
+      case DioExceptionType.connectionError:
+        return const ApiException(
+          message: 'Unable to reach the server. Check that the server is running and you are on the correct network.',
+          statusCode: null,
+        );
+      default:
+        return ApiException(
+          message: e.message ?? 'Something went wrong.',
+          statusCode: null,
+        );
+    }
+  }
+}
+
+// ─── Riverpod Provider ────────────────────────────────────────────────────────
+
+final dioClientProvider = Provider<Dio>((ref) => DioClient.instance);

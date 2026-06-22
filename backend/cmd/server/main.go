@@ -21,6 +21,7 @@ import (
 	aiHandler "github.com/yourusername/docassist/internal/ai/handler"
 	aiService "github.com/yourusername/docassist/internal/ai/service"
 	authHandler "github.com/yourusername/docassist/internal/auth/handler"
+	authModel "github.com/yourusername/docassist/internal/auth/model"
 	authRepo "github.com/yourusername/docassist/internal/auth/repository"
 	authService "github.com/yourusername/docassist/internal/auth/service"
 	docHandler "github.com/yourusername/docassist/internal/document/handler"
@@ -84,33 +85,26 @@ func main() {
 	defer database.Close()
 	logger.Info("PostgreSQL connected")
 
-	// Auto-migrate schema (adds new columns, never drops)
-	if err := db.AutoMigrate(&docModel.Document{}, &docModel.DocumentChunk{}, &matterModel.Matter{}, &matterModel.MatterDocument{}); err != nil {
-		logger.Error("AutoMigrate failed — attempting manual table creation", logger.Err(err))
-		// Fallback: create matters tables manually if AutoMigrate failed
-		db.Exec(`CREATE TABLE IF NOT EXISTS matters (
-			id UUID PRIMARY KEY,
-			user_id UUID NOT NULL,
-			title VARCHAR(500) NOT NULL,
-			matter_no VARCHAR(100),
-			client VARCHAR(255),
-			court VARCHAR(255),
-			status VARCHAR(20) DEFAULT 'active',
-			description TEXT,
-			created_at TIMESTAMPTZ DEFAULT NOW(),
-			updated_at TIMESTAMPTZ DEFAULT NOW()
-		)`)
-		db.Exec(`CREATE INDEX IF NOT EXISTS idx_matters_user_id ON matters(user_id)`)
-		db.Exec(`CREATE TABLE IF NOT EXISTS matter_documents (
-			matter_id UUID NOT NULL,
-			document_id UUID NOT NULL,
-			added_at TIMESTAMPTZ DEFAULT NOW(),
-			PRIMARY KEY (matter_id, document_id)
-		)`)
-		logger.Info("Manual table creation attempted")
-	} else {
-		logger.Info("Schema migration complete")
+	// Auto-migrate all models — GORM creates/updates tables, never drops columns
+	if err := db.AutoMigrate(
+		&authModel.Role{},
+		&authModel.User{},
+		&authModel.RefreshToken{},
+		&authModel.PasswordResetToken{},
+		&authModel.UserSettings{},
+		&docModel.Document{},
+		&docModel.DocumentChunk{},
+		&matterModel.Matter{},
+		&matterModel.MatterDocument{},
+	); err != nil {
+		logger.Fatal("AutoMigrate failed", logger.Err(err))
 	}
+	logger.Info("Schema migration complete")
+
+	// Seed default roles (admin=1, user=2) — safe to run on every startup
+	db.Exec(`INSERT INTO roles (id, name, description, permissions) VALUES (1, 'admin', 'Administrator', '{}') ON CONFLICT (id) DO NOTHING`)
+	db.Exec(`INSERT INTO roles (id, name, description, permissions) VALUES (2, 'user', 'Regular user', '{}') ON CONFLICT (id) DO NOTHING`)
+	logger.Info("Roles seeded")
 
 	// ─── 5. Connect Redis ────────────────────────────────────────────────────────
 	redisClient, err := connectRedis(cfg)

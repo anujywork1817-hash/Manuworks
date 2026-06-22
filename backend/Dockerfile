@@ -13,6 +13,9 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 
 WORKDIR /app
 
+# Allow Go to auto-download the toolchain version required by go.mod
+ENV GOTOOLCHAIN=auto
+
 # Copy dependency files first for better layer caching
 COPY go.mod go.sum ./
 RUN go mod download

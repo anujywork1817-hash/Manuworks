@@ -9,10 +9,7 @@ import 'package:shared_preferences/shared_preferences.dart';
 
 class ApiConstants {
   ApiConstants._();
-  //static const baseUrl = String.fromEnvironment('API_URL',
-     // defaultValue: 'http://localhost:8080/api/v1');
-
-     static const String baseUrl = 'http://192.168.1.12:8080/api/v1';
+  static const String baseUrl = 'http://45.119.30.56:8080/api/v1';
 
 
   static const connectTimeout = Duration(seconds: 30);

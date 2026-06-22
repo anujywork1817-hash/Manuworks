@@ -123,37 +123,37 @@ services:
     build:
       context: ./backend
       dockerfile: Dockerfile
-      target: development       # Multi-stage: development | production
     container_name: docassist_backend
     restart: unless-stopped
     env_file:
       - .env
     environment:
-      # Override with container service names
+      # Override .env with internal container hostnames
       POSTGRES_HOST: postgres
       POSTGRES_PORT: 5432
+      POSTGRES_SSL_MODE: disable
       REDIS_HOST:    redis
-      REDIS_PORT:    6379   # Inside the network container-to-container still uses 6379
+      REDIS_PORT:    6379
       QDRANT_HOST:   qdrant
       QDRANT_PORT:   6333
+      APP_ENV:       production
+      APP_DEBUG:     "false"
+      LOG_OUTPUT:    stdout
     ports:
       - "8080:8080"
     volumes:
-      - ./backend:/app              # Hot reload in dev
-      - storage_data:/app/storage   # Persistent file storage
+      - storage_data:/app/storage
     networks:
       - docassist_net
     depends_on:
       postgres:
         condition: service_healthy
-      qdrant:
-        condition: service_healthy
       redis:
         condition: service_healthy
     profiles:
-      - app   # Only starts with: docker compose --profile app up
+      - app
     healthcheck:
-      test: ["CMD-SHELL", "curl -f http://localhost:8080/health || exit 1"]
+      test: ["CMD-SHELL", "wget -qO- http://localhost:8080/health || exit 1"]
       interval: 15s
       timeout: 5s
       retries: 3

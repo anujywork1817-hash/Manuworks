@@ -1,6 +1,6 @@
 module github.com/yourusername/docassist
 
-go 1.25.8
+go 1.22.0
 
 require (
 	github.com/gin-contrib/cors v1.7.7

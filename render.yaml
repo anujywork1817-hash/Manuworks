@@ -3,6 +3,7 @@ databases:
     databaseName: docassist_db
     user: docassist
     plan: free
+    region: singapore
 
 services:
   - type: web
@@ -10,6 +11,7 @@ services:
     runtime: docker
     dockerfilePath: ./backend/Dockerfile
     dockerContext: ./backend
+    region: singapore
     plan: free
     healthCheckPath: /health
     envVars:
@@ -51,11 +53,15 @@ services:
           name: lexdocs-postgres
           property: database
 
-      # JWT — auto-generated random secrets
+      # JWT — auto-generated random secrets, longer expiry so app stays logged in
       - key: JWT_ACCESS_SECRET
         generateValue: true
       - key: JWT_REFRESH_SECRET
         generateValue: true
+      - key: JWT_ACCESS_EXPIRY
+        value: 24h
+      - key: JWT_REFRESH_EXPIRY
+        value: 168h
 
       # AI — set manually in Render dashboard after deploy
       - key: GEMINI_API_KEY
@@ -63,7 +69,15 @@ services:
       - key: GROQ_API_KEY
         sync: false
 
-      # Qdrant (optional — leave blank to disable vector search)
+      # Redis — set manually (use Upstash free tier: upstash.com)
+      - key: REDIS_HOST
+        sync: false
+      - key: REDIS_PORT
+        sync: false
+      - key: REDIS_PASSWORD
+        sync: false
+
+      # Qdrant — set manually (use Qdrant Cloud free tier: cloud.qdrant.io)
       - key: QDRANT_HOST
         sync: false
       - key: QDRANT_API_KEY

@@ -51,7 +51,7 @@ bool _isIpAddr(String h) =>
 
 class ApiConstants {
   ApiConstants._();
-  static const String baseUrl = 'https://itinerary-juggling-undercook.ngrok-free.dev/api/v1';
+  static const String baseUrl = 'https://lexdocs-api.onrender.com/api/v1';
 
 
   static const connectTimeout = Duration(seconds: 30);
@@ -269,7 +269,6 @@ class DioClient {
         headers: {
           'Content-Type': 'application/json',
           'Accept': 'application/json',
-          'ngrok-skip-browser-warning': 'true',
         },
         validateStatus: (status) => status != null && status < 500,
       ),

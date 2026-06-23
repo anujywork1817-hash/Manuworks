@@ -85,6 +85,12 @@ func main() {
 	defer database.Close()
 	logger.Info("PostgreSQL connected")
 
+	// Create custom PostgreSQL ENUM types that GORM cannot create automatically
+	db.Exec(`DO $$ BEGIN
+		CREATE TYPE user_status AS ENUM ('active', 'inactive', 'suspended');
+	EXCEPTION WHEN duplicate_object THEN NULL;
+	END $$;`)
+
 	// Auto-migrate all models — GORM creates/updates tables, never drops columns
 	if err := db.AutoMigrate(
 		&authModel.Role{},

@@ -31,7 +31,8 @@ class AuthNotifier extends AsyncNotifier<bool> {
   }
 
   Future<void> login(String email, String password) async {
-    state = const AsyncLoading();
+    // Do NOT set AsyncLoading here — that triggers the router's splash redirect,
+    // which navigates away and swallows any error message shown on the login screen.
     try {
       final response = await DioClient.post('/auth/login', data: {
         'email': email,
@@ -50,8 +51,8 @@ class AuthNotifier extends AsyncNotifier<bool> {
       );
 
       state = const AsyncData(true);
-    } catch (e) {
-      state = const AsyncData(false);
+    } catch (e, st) {
+      state = AsyncError(e, st);
       rethrow;
     }
   }
@@ -62,7 +63,6 @@ class AuthNotifier extends AsyncNotifier<bool> {
     required String email,
     required String password,
   }) async {
-    state = const AsyncLoading();
     try {
       final response = await DioClient.post('/auth/register', data: {
         'first_name': firstName,
@@ -83,8 +83,8 @@ class AuthNotifier extends AsyncNotifier<bool> {
       );
 
       state = const AsyncData(true);
-    } catch (e) {
-      state = const AsyncData(false);
+    } catch (e, st) {
+      state = AsyncError(e, st);
       rethrow;
     }
   }

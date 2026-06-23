@@ -63,7 +63,7 @@ class NotificationService {
   static const _kChannelName = 'DocAssist';
 
   Future<void> init() async {
-    const android = AndroidInitializationSettings('ic_notification');
+    const android = AndroidInitializationSettings('@mipmap/ic_launcher');
     const ios = DarwinInitializationSettings(
       requestAlertPermission: false,
       requestBadgePermission: false,
@@ -95,7 +95,7 @@ class NotificationService {
         _kChannelName,
         importance: Importance.high,
         priority: Priority.high,
-        icon: 'ic_notification',
+        icon: '@mipmap/ic_launcher',
       ),
       iOS: DarwinNotificationDetails(),
     );

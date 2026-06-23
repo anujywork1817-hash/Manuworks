@@ -8,7 +8,9 @@ import 'core/providers/theme_provider.dart';
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
-  await NotificationService.instance.init();
+  try {
+    await NotificationService.instance.init();
+  } catch (_) {}
   runApp(const ProviderScope(child: DocAssistApp()));
 }
 

@@ -270,9 +270,11 @@ func main() {
 		protected.POST("/documents/:document_id/autotag", aiH.AutoTag)
 		protected.POST("/documents/:document_id/grammar", aiH.CheckGrammar)
 		protected.POST("/ai/draft-legal", aiH.DraftLegalDocument)
+		protected.POST("/ai/complaint-reply", aiH.ComplaintReplyGenerator)
+		protected.POST("/ai/complaint-reply/download", aiH.DownloadReplyDocx)
 		protected.POST("/ocr/scan", aiH.ScanOCR)
 		protected.POST("/ai/compare", aiH.CompareDocuments)
-			protected.POST("/ai/help", aiH.HelpChat)
+		protected.POST("/ai/help", aiH.HelpChat)
 		protected.GET("/documents/:document_id/search", searchH.SearchInDocument)
 
 		// Chat

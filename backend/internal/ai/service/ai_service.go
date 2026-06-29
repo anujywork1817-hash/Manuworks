@@ -93,6 +93,7 @@ type AIService interface {
 	DraftLegalDoc(ctx context.Context, userID uuid.UUID, req groq.LegalDraftRequest) (*groq.LegalDraftResponse, error)
 	CompareDocuments(ctx context.Context, userID, docID1, docID2 uuid.UUID) (*groq.CompareResponse, error)
 	HelpChat(ctx context.Context, history []groq.ChatMessage, message string) (string, error)
+	GenerateComplaintReply(ctx context.Context, userID uuid.UUID, complaintText, existingReplyText string) (*ComplaintReplyResult, error)
 }
 
 // ─── Implementation ───────────────────────────────────────────────────────────
@@ -702,9 +703,32 @@ func truncate(text string, maxChars int) string {
 // --- Document Drafter ------------------------------------------------------
 
 type DraftResult struct {
-    DocumentID string `json:"document_id"`
-    Title      string `json:"title"`
-    Content    string `json:"content"`
+	DocumentID string `json:"document_id"`
+	Title      string `json:"title"`
+	Content    string `json:"content"`
+}
+
+// ComplaintReplyResult is the AI-generated reply for a complaint.
+type ComplaintReplyResult struct {
+	ReplyText        string   `json:"reply_text"`
+	ModifiedSections []string `json:"modified_sections"`
+	Summary          string   `json:"summary"`
+}
+
+func (s *aiService) GenerateComplaintReply(ctx context.Context, userID uuid.UUID, complaintText, existingReplyText string) (*ComplaintReplyResult, error) {
+	result, err := s.groqClient.GenerateComplaintReply(
+		ctx,
+		truncate(complaintText, 8000),
+		truncate(existingReplyText, 8000),
+	)
+	if err != nil {
+		return nil, err
+	}
+	return &ComplaintReplyResult{
+		ReplyText:        result.ReplyText,
+		ModifiedSections: result.ModifiedSections,
+		Summary:          result.Summary,
+	}, nil
 }
 
 func (s *aiService) DraftDocument(ctx context.Context, userID uuid.UUID, docType, details string) (*DraftResult, error) {

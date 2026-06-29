@@ -1,51 +1,9 @@
-import 'dart:convert';
-import 'dart:io';
-
 import 'package:dio/dio.dart';
-import 'package:dio/io.dart';
 import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import 'package:pretty_dio_logger/pretty_dio_logger.dart';
 import 'package:shared_preferences/shared_preferences.dart';
-
-// ─── DNS-over-HTTPS fallback ──────────────────────────────────────────────────
-// Dart AOT (release) DNS can fail on certain Android devices/networks while
-// Chrome succeeds. This resolves via Cloudflare's DoH endpoint at 1.1.1.1
-// (connects by raw IP — no DNS needed, bypasses the broken system resolver).
-
-HttpClient _makeDohClient() {
-  final c = HttpClient();
-  c.badCertificateCallback = (_, __, ___) => true;
-  c.connectionTimeout = const Duration(seconds: 5);
-  return c;
-}
-
-final _dohClient = _makeDohClient();
-final _dnsCache = <String, String>{};
-
-Future<String?> _dohResolve(String hostname) async {
-  if (_dnsCache.containsKey(hostname)) return _dnsCache[hostname];
-  try {
-    final req = await _dohClient.getUrl(
-      Uri.parse(
-          'https://1.1.1.1/dns-query?name=${Uri.encodeComponent(hostname)}&type=A'),
-    );
-    req.headers.set('accept', 'application/dns-json');
-    final resp = await req.close();
-    final body = await resp.transform(utf8.decoder).join();
-    final data = jsonDecode(body) as Map<String, dynamic>;
-    for (final a in (data['Answer'] as List? ?? [])) {
-      if ((a as Map)['type'] == 1) {
-        return _dnsCache[hostname] = a['data'] as String;
-      }
-    }
-  } catch (_) {}
-  return null;
-}
-
-bool _isIpAddr(String h) =>
-    RegExp(r'^\d+\.\d+\.\d+\.\d+$').hasMatch(h) || h.contains(':');
 
 // ─── Constants ────────────────────────────────────────────────────────────────
 
@@ -275,36 +233,6 @@ class DioClient {
     );
 
     dio.interceptors.add(AuthInterceptor(dio));
-
-    // On Android AOT (release), system DNS can fail while Chrome works.
-    // Fall back to Cloudflare DoH at 1.1.1.1 (raw IP — no DNS needed).
-    if (!kIsWeb) {
-      (dio.httpClientAdapter as IOHttpClientAdapter).createHttpClient = () {
-        final client = HttpClient();
-        client.connectionFactory = (uri, _, __) async {
-          final host = uri.host;
-          final port = uri.port > 0
-              ? uri.port
-              : uri.scheme == 'https' ? 443 : 80;
-          if (_isIpAddr(host)) {
-            return ConnectionTask.fromSocket(
-                Socket.connect(host, port), () {});
-          }
-          try {
-            await InternetAddress.lookup(host)
-                .timeout(const Duration(seconds: 3));
-          } on Exception {
-            final ip = await _dohResolve(host);
-            if (ip != null) {
-              return ConnectionTask.fromSocket(
-                  Socket.connect(ip, port), () {});
-            }
-          }
-          return ConnectionTask.fromSocket(Socket.connect(host, port), () {});
-        };
-        return client;
-      };
-    }
 
     assert(() {
       dio.interceptors.add(

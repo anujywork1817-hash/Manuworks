@@ -20,6 +20,7 @@ import '../../features/auth/screens/profile_screen.dart';
 import '../../features/documents/screens/favourites_screen.dart';
 import '../../features/help/screens/help_center_screen.dart';
 import '../../features/notifications/screens/notifications_screen.dart';
+import '../../features/complaint_reply/screens/complaint_reply_screen.dart';
 
 class AppRoutes {
   static const splash = '/';
@@ -42,6 +43,7 @@ class AppRoutes {
   static const favourites = '/favourites';
   static const helpCenter = '/help';
   static const notifications = '/notifications';
+  static const complaintReply = '/complaint-reply';
 }
 
 class AuthNotifierListenable extends ChangeNotifier {
@@ -126,6 +128,7 @@ final routerProvider = Provider<GoRouter>((ref) {
           GoRoute(path: AppRoutes.favourites, builder: (c, s) => const FavouritesScreen()),
           GoRoute(path: AppRoutes.helpCenter, builder: (c, s) => const HelpCenterScreen()),
           GoRoute(path: AppRoutes.notifications, builder: (c, s) => const NotificationsScreen()),
+          GoRoute(path: AppRoutes.complaintReply, builder: (c, s) => const ComplaintReplyScreen()),
         ],
       ),
     ],

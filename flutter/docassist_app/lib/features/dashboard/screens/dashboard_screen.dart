@@ -147,18 +147,29 @@ class DashboardScreen extends ConsumerWidget {
               SliverToBoxAdapter(
                 child: Padding(
                   padding: const EdgeInsets.fromLTRB(20, 20, 20, 0),
-                  child: Row(children: [
-                    _FeatureChip(icon: Icons.upload_file_outlined, label: 'Upload',
-                        onTap: () => context.go(AppRoutes.documents), cs: cs, tt: tt),
-                    const SizedBox(width: 10),
-                    _FeatureChip(icon: Icons.draw_outlined, label: 'Draft',
-                        onTap: () => context.push(AppRoutes.draft), cs: cs, tt: tt),
-                    const SizedBox(width: 10),
-                    _FeatureChip(icon: Icons.document_scanner_outlined, label: 'Scan',
-                        onTap: () => context.push(AppRoutes.ocrScan), cs: cs, tt: tt),
-                    const SizedBox(width: 10),
-                    _FeatureChip(icon: Icons.compare_arrows_rounded, label: 'Compare',
-                        onTap: () => context.push(AppRoutes.compare), cs: cs, tt: tt),
+                  child: Column(children: [
+                    Row(children: [
+                      _FeatureChip(icon: Icons.upload_file_outlined, label: 'Upload',
+                          onTap: () => context.go(AppRoutes.documents), cs: cs, tt: tt),
+                      const SizedBox(width: 10),
+                      _FeatureChip(icon: Icons.draw_outlined, label: 'Draft',
+                          onTap: () => context.push(AppRoutes.draft), cs: cs, tt: tt),
+                      const SizedBox(width: 10),
+                      _FeatureChip(icon: Icons.document_scanner_outlined, label: 'Scan',
+                          onTap: () => context.push(AppRoutes.ocrScan), cs: cs, tt: tt),
+                      const SizedBox(width: 10),
+                      _FeatureChip(icon: Icons.compare_arrows_rounded, label: 'Compare',
+                          onTap: () => context.push(AppRoutes.compare), cs: cs, tt: tt),
+                    ]),
+                    const SizedBox(height: 10),
+                    Row(children: [
+                      _FeatureChip(
+                        icon: Icons.reply_all_outlined,
+                        label: 'Reply Gen',
+                        onTap: () => context.push(AppRoutes.complaintReply),
+                        cs: cs, tt: tt,
+                      ),
+                    ]),
                   ]),
                 ),
               ),

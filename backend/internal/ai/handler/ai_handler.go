@@ -3,6 +3,7 @@ package handler
 import (
 	"context"
 	"fmt"
+	"io"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -385,6 +386,133 @@ func (h *AIHandler) HelpChat(c *gin.Context) {
 		return
 	}
 	respond(c, http.StatusOK, true, "ok", gin.H{"reply": reply})
+}
+
+// ComplaintReplyGenerator accepts a complaint PDF and an existing reply DOCX template
+// via multipart form, extracts text from both, and returns an AI-generated reply.
+func (h *AIHandler) ComplaintReplyGenerator(c *gin.Context) {
+	userID, err := uuid.Parse(middleware.GetUserID(c))
+	if err != nil {
+		respond(c, http.StatusUnauthorized, false, "invalid token", nil)
+		return
+	}
+
+	// ── Complaint PDF ──────────────────────────────────────────────────────────
+	complaintFile, complaintHeader, err := c.Request.FormFile("complaint_pdf")
+	if err != nil {
+		respond(c, http.StatusBadRequest, false, "complaint_pdf file is required", nil)
+		return
+	}
+	defer complaintFile.Close()
+
+	// ── Reply DOCX template ────────────────────────────────────────────────────
+	replyFile, replyHeader, err := c.Request.FormFile("reply_docx")
+	if err != nil {
+		respond(c, http.StatusBadRequest, false, "reply_docx file is required", nil)
+		return
+	}
+	defer replyFile.Close()
+
+	// ── Save complaint to temp file ────────────────────────────────────────────
+	complaintExt := filepath.Ext(complaintHeader.Filename)
+	if complaintExt == "" {
+		complaintExt = ".pdf"
+	}
+	complaintTmp, err := os.CreateTemp("", "complaint-*"+complaintExt)
+	if err != nil {
+		respond(c, http.StatusInternalServerError, false, "failed to create temp file", nil)
+		return
+	}
+	defer os.Remove(complaintTmp.Name())
+	if _, err := io.Copy(complaintTmp, complaintFile); err != nil {
+		complaintTmp.Close()
+		respond(c, http.StatusInternalServerError, false, "failed to save complaint file", nil)
+		return
+	}
+	complaintTmp.Close()
+
+	// ── Save reply DOCX to temp file ───────────────────────────────────────────
+	replyExt := filepath.Ext(replyHeader.Filename)
+	if replyExt == "" {
+		replyExt = ".docx"
+	}
+	replyTmp, err := os.CreateTemp("", "reply-*"+replyExt)
+	if err != nil {
+		respond(c, http.StatusInternalServerError, false, "failed to create temp file", nil)
+		return
+	}
+	defer os.Remove(replyTmp.Name())
+	if _, err := io.Copy(replyTmp, replyFile); err != nil {
+		replyTmp.Close()
+		respond(c, http.StatusInternalServerError, false, "failed to save reply file", nil)
+		return
+	}
+	replyTmp.Close()
+
+	// ── Extract text from complaint PDF ────────────────────────────────────────
+	complaintResult, err := h.ocrService.ExtractText(c.Request.Context(), complaintTmp.Name())
+	if err != nil || complaintResult.Text == "" {
+		msg := "Failed to extract text from complaint PDF — ensure it is a readable PDF"
+		if err != nil {
+			msg = fmt.Sprintf("Complaint extraction failed: %v", err)
+		}
+		respond(c, http.StatusBadRequest, false, msg, nil)
+		return
+	}
+
+	// ── Extract text from reply DOCX ───────────────────────────────────────────
+	replyResult, err := h.ocrService.ExtractText(c.Request.Context(), replyTmp.Name())
+	if err != nil || replyResult.Text == "" {
+		msg := "Failed to extract text from reply DOCX — ensure it is a valid Word document"
+		if err != nil {
+			msg = fmt.Sprintf("Reply extraction failed: %v", err)
+		}
+		respond(c, http.StatusBadRequest, false, msg, nil)
+		return
+	}
+
+	logger.Info("Complaint reply generation started",
+		logger.Str("user_id", userID.String()),
+		logger.Int("complaint_chars", len(complaintResult.Text)),
+		logger.Int("reply_template_chars", len(replyResult.Text)),
+	)
+
+	// ── Generate new reply via AI ──────────────────────────────────────────────
+	result, err := h.aiService.GenerateComplaintReply(
+		c.Request.Context(), userID, complaintResult.Text, replyResult.Text,
+	)
+	if err != nil {
+		respond(c, http.StatusInternalServerError, false, err.Error(), nil)
+		return
+	}
+
+	respond(c, http.StatusOK, true, "Complaint reply generated", result)
+}
+
+// DownloadReplyDocx accepts the generated reply text and returns it as a .docx binary.
+func (h *AIHandler) DownloadReplyDocx(c *gin.Context) {
+	var req struct {
+		Text     string `json:"text" binding:"required"`
+		Filename string `json:"filename"`
+	}
+	if err := c.ShouldBindJSON(&req); err != nil || req.Text == "" {
+		respond(c, http.StatusBadRequest, false, "text is required", nil)
+		return
+	}
+
+	docxBytes, err := ocr.CreateDocx(req.Text)
+	if err != nil {
+		respond(c, http.StatusInternalServerError, false, "failed to create DOCX file", nil)
+		return
+	}
+
+	filename := req.Filename
+	if filename == "" {
+		filename = "complaint_reply.docx"
+	}
+
+	c.Header("Content-Disposition", `attachment; filename="`+filename+`"`)
+	c.Data(http.StatusOK, "application/vnd.openxmlformats-officedocument.wordprocessingml.document", docxBytes)
 }
 
 func (h *AIHandler) ScanOCR(c *gin.Context) {

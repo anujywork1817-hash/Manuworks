@@ -980,6 +980,104 @@ Answer questions helpfully and concisely. For how-to questions, give clear numbe
 	return chatResp.Choices[0].Message.Content, nil
 }
 
+// ─── Complaint Reply Generator ────────────────────────────────────────────────
+
+// ComplaintReplyResponse holds the AI-generated reply and change metadata.
+type ComplaintReplyResponse struct {
+	ReplyText        string   `json:"reply_text"`
+	ModifiedSections []string `json:"modified_sections"`
+	Summary          string   `json:"summary"`
+}
+
+// GenerateComplaintReply generates a new legal reply for a complaint by adapting
+// an existing reply template, preserving its structure, legal language, and tone
+// while replacing all case-specific facts, parties, and allegations.
+func (c *Client) GenerateComplaintReply(ctx context.Context, complaintText, existingReplyText string) (*ComplaintReplyResponse, error) {
+	system := `You are a senior Indian advocate with 20 years of experience drafting legal replies, written statements, and counter-affidavits. You specialize in adapting existing reply templates to new complaints while preserving their legal structure and language.`
+
+	prompt := fmt.Sprintf(`You are given:
+1. A NEW COMPLAINT that requires a reply
+2. An EXISTING REPLY (template) for a different but similar complaint
+
+Your task:
+- Carefully read the new complaint: identify parties, allegations, facts, dates, case number, court, relief sought
+- Analyze the existing reply: understand its structure, numbered paragraphs, preliminary objections, legal language, tone, and signature block
+- Generate a COMPLETE NEW REPLY by adapting the existing reply to address the new complaint:
+  * Preserve the exact document structure (same sections, heading pattern, paragraph numbering style)
+  * Preserve all standard preliminary objections, legal submissions, and formal language patterns
+  * Replace case-specific details: party names, dates, allegations, case/complaint number, facts
+  * Adapt legal arguments paragraph by paragraph to address the new complaint's specific allegations
+  * Do NOT copy verbatim from the complaint text; respond to each allegation in legal terms
+  * Maintain the same tone (formal, professional, legally precise)
+  * Include proper signature block, verification, and date placeholders
+
+Output format — follow EXACTLY (do not change the markers):
+---REPLY---
+[Write the complete, ready-to-file reply here. All paragraphs numbered. Proper formal legal language. Do not truncate — write the full document.]
+---END_REPLY---
+---CHANGES---
+[List each change made, one per line starting with "- ", e.g.:
+- Parties updated: old names replaced with new complainant/respondent
+- Case/complaint number updated throughout
+- Paragraphs 3-6: Facts adapted to address new allegations
+- Prayer section: Updated to reflect new complaint relief
+- Dates: All dates updated per new complaint
+]
+---END_CHANGES---
+---SUMMARY---
+[One short paragraph explaining what the new complaint is about and how the reply addresses it.]
+---END_SUMMARY---
+
+NEW COMPLAINT:
+%s
+
+EXISTING REPLY (TEMPLATE — use this structure and language):
+%s
+
+Write the complete new reply now:`, complaintText, existingReplyText)
+
+	raw, err := c.generate(ctx, system, prompt, 4000)
+	if err != nil {
+		return nil, fmt.Errorf("generate complaint reply: %w", err)
+	}
+
+	return parseComplaintReply(raw), nil
+}
+
+func parseComplaintReply(raw string) *ComplaintReplyResponse {
+	result := &ComplaintReplyResponse{ModifiedSections: []string{}}
+
+	if s := strings.Index(raw, "---REPLY---"); s != -1 {
+		if e := strings.Index(raw, "---END_REPLY---"); e != -1 && e > s {
+			result.ReplyText = strings.TrimSpace(raw[s+len("---REPLY---") : e])
+		}
+	}
+	if s := strings.Index(raw, "---CHANGES---"); s != -1 {
+		if e := strings.Index(raw, "---END_CHANGES---"); e != -1 && e > s {
+			block := strings.TrimSpace(raw[s+len("---CHANGES---") : e])
+			for _, line := range strings.Split(block, "\n") {
+				line = strings.TrimSpace(line)
+				if line == "" {
+					continue
+				}
+				if strings.HasPrefix(line, "- ") {
+					line = strings.TrimPrefix(line, "- ")
+				}
+				result.ModifiedSections = append(result.ModifiedSections, line)
+			}
+		}
+	}
+	if s := strings.Index(raw, "---SUMMARY---"); s != -1 {
+		if e := strings.Index(raw, "---END_SUMMARY---"); e != -1 && e > s {
+			result.Summary = strings.TrimSpace(raw[s+len("---SUMMARY---") : e])
+		}
+	}
+	if result.ReplyText == "" {
+		result.ReplyText = strings.TrimSpace(raw)
+	}
+	return result
+}
+
 func (c *Client) ExtractCitations(ctx context.Context, text string) (*CitationsResponse, error) {
     system := `You are a legal document analysis expert specializing in Indian law. Extract all legal citations. Always respond with valid JSON only, no markdown, no explanation.`
     prompt := fmt.Sprintf(`Extract all legal citations and references from this Indian legal document.

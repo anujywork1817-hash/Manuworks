@@ -85,34 +85,55 @@ func (s *Service) ExtractFromFile(ctx context.Context, filePath string) (*Extrac
 // extractFromPDF converts each PDF page to an image then runs Tesseract on each.
 // Requires: pdftoppm (from poppler-utils) installed on the system.
 func (s *Service) extractFromPDF(ctx context.Context, pdfPath string) (*ExtractResult, error) {
-	// Create a temp directory for page images
 	tmpDir, err := os.MkdirTemp("", "ocr_pdf_*")
 	if err != nil {
 		return nil, fmt.Errorf("failed to create temp dir: %w", err)
 	}
 	defer os.RemoveAll(tmpDir)
 
-	// Convert PDF pages to PNG images using pdftoppm
-	// -r 300 = 300 DPI (good quality for OCR)
-	// -png = output format
 	outputPrefix := filepath.Join(tmpDir, "page")
-
 	timeoutCtx, cancel := context.WithTimeout(ctx, s.cfg.Timeout)
 	defer cancel()
 
-	cmd := exec.CommandContext(timeoutCtx, "pdftoppm",
-		"-r", "300",
-		"-png",
-		pdfPath,
-		outputPrefix,
-	)
-
-	if output, err := cmd.CombinedOutput(); err != nil {
-		// pdftoppm not available — try direct PDF OCR as fallback
-		logger.Warn("pdftoppm not available, falling back to direct OCR",
-			logger.Str("error", string(output)),
+	// Try 300 DPI first, fall back to 150 DPI if system is memory-constrained.
+	// NOTE: Never pass a .pdf path to extractFromImage — Tesseract cannot read PDFs.
+	var pdftoppmErr string
+	for _, dpi := range []string{"300", "150"} {
+		cmd := exec.CommandContext(timeoutCtx, "pdftoppm",
+			"-r", dpi,
+			"-png",
+			pdfPath,
+			outputPrefix,
 		)
-		return s.extractFromImage(ctx, pdfPath)
+		if out, err := cmd.CombinedOutput(); err == nil {
+			pdftoppmErr = ""
+			break
+		} else {
+			pdftoppmErr = strings.TrimSpace(string(out))
+			logger.Warn("pdftoppm failed at "+dpi+" DPI, retrying",
+				logger.Str("error", pdftoppmErr),
+			)
+			// Clear temp dir before retry
+			os.RemoveAll(tmpDir)
+			tmpDir, _ = os.MkdirTemp("", "ocr_pdf_*")
+			outputPrefix = filepath.Join(tmpDir, "page")
+		}
+	}
+
+	if pdftoppmErr != "" {
+		// Both DPI attempts failed. Try pdftotext as a last resort (works for digital PDFs).
+		if text, terr := extractDigitalPDFText(pdfPath); terr == nil && len(strings.TrimSpace(text)) > 50 {
+			logger.Info("pdftotext fallback succeeded after pdftoppm failure")
+			cleaned := cleanText(text)
+			return &ExtractResult{
+				Text:       cleaned,
+				PageCount:  estimatePageCount(cleaned),
+				WordCount:  countWords(cleaned),
+				Language:   s.cfg.Lang,
+				Confidence: 90.0,
+			}, nil
+		}
+		return nil, fmt.Errorf("PDF text extraction failed: pdftoppm could not convert this PDF to images (%s). The PDF may be encrypted, corrupted, or too large for the server", pdftoppmErr)
 	}
 
 	// Find all generated page images (page-1.png, page-2.png, ...)

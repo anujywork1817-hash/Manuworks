@@ -89,7 +89,7 @@ func (s *Service) extractFromPDF(ctx context.Context, pdfPath string) (*ExtractR
 	if err != nil {
 		return nil, fmt.Errorf("failed to create temp dir: %w", err)
 	}
-	defer os.RemoveAll(tmpDir)
+	defer func() { os.RemoveAll(tmpDir) }() // closure captures tmpDir by reference so reassignment in the retry loop is cleaned up
 
 	outputPrefix := filepath.Join(tmpDir, "page")
 	timeoutCtx, cancel := context.WithTimeout(ctx, s.cfg.Timeout)
@@ -136,17 +136,38 @@ func (s *Service) extractFromPDF(ctx context.Context, pdfPath string) (*ExtractR
 		return nil, fmt.Errorf("PDF text extraction failed: pdftoppm could not convert this PDF to images (%s). The PDF may be encrypted, corrupted, or too large for the server", pdftoppmErr)
 	}
 
-	// Find all generated page images (page-1.png, page-2.png, ...)
-	pattern := filepath.Join(tmpDir, "page-*.png")
-	pages, err := filepath.Glob(pattern)
-	if err != nil || len(pages) == 0 {
-		// Try alternative naming (page-01.png)
-		pattern = filepath.Join(tmpDir, "page-0*.png")
-		pages, _ = filepath.Glob(pattern)
+	// Discover all generated page images by listing the temp dir.
+	// This is more robust than glob — it catches any naming convention (page-1, page-01, etc.)
+	// and any format pdftoppm may produce (PNG, PPM, JPG depending on version/flags).
+	var pages []string
+	if entries, rdErr := os.ReadDir(tmpDir); rdErr == nil {
+		for _, e := range entries {
+			if e.IsDir() {
+				continue
+			}
+			switch strings.ToLower(filepath.Ext(e.Name())) {
+			case ".png", ".ppm", ".jpg", ".jpeg":
+				pages = append(pages, filepath.Join(tmpDir, e.Name()))
+			}
+		}
+		// os.ReadDir returns entries alphabetically, which matches page order for zero-padded filenames.
 	}
 
 	if len(pages) == 0 {
-		return nil, fmt.Errorf("no page images generated from PDF")
+		// pdftoppm exited 0 but produced no image files.
+		// Last resort: pdftotext handles PDFs with an embedded text/OCR layer.
+		if text, terr := extractDigitalPDFText(pdfPath); terr == nil && len(strings.TrimSpace(text)) > 10 {
+			logger.Info("pdftotext last-resort succeeded after pdftoppm produced no images")
+			cleaned := cleanText(text)
+			return &ExtractResult{
+				Text:       cleaned,
+				PageCount:  estimatePageCount(cleaned),
+				WordCount:  countWords(cleaned),
+				Language:   s.cfg.Lang,
+				Confidence: 90.0,
+			}, nil
+		}
+		return nil, fmt.Errorf("could not extract text from this PDF — it appears to be image-only but the server could not render its pages (the file may be encrypted, corrupted, or in an unsupported PDF format)")
 	}
 
 	// OCR each page

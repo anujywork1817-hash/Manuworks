@@ -22,6 +22,7 @@ class _ComplaintReplyScreenState extends ConsumerState<ComplaintReplyScreen> {
   PlatformFile? _replyFile;
   bool _generating = false;
   bool _downloading = false;
+  bool _downloadingPdf = false;
 
   String? _replyText;
   List<String> _modifiedSections = [];
@@ -172,6 +173,49 @@ class _ComplaintReplyScreenState extends ConsumerState<ComplaintReplyScreen> {
       }
     } finally {
       if (mounted) setState(() => _downloading = false);
+    }
+  }
+
+  Future<void> _downloadPdf() async {
+    final text = _editCtrl.text.trim();
+    if (text.isEmpty) return;
+    setState(() => _downloadingPdf = true);
+    try {
+      final response = await DioClient.instance.post(
+        '/ai/complaint-reply/download-pdf',
+        data: {'text': text, 'filename': 'complaint_reply.pdf'},
+        options: Options(responseType: ResponseType.bytes),
+      );
+
+      final bytes = response.data as List<int>;
+      final Directory dir;
+      if (Platform.isAndroid) {
+        dir = Directory('/storage/emulated/0/Download');
+        if (!dir.existsSync()) await dir.create(recursive: true);
+      } else {
+        dir = await getApplicationDocumentsDirectory();
+      }
+
+      final ts = DateTime.now().millisecondsSinceEpoch;
+      final file = File('${dir.path}/complaint_reply_$ts.pdf');
+      await file.writeAsBytes(bytes);
+      await OpenFile.open(file.path);
+
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
+          content: Text('PDF saved and opened'),
+          behavior: SnackBarBehavior.floating,
+        ));
+      }
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+          content: Text('PDF download failed: $e'),
+          behavior: SnackBarBehavior.floating,
+        ));
+      }
+    } finally {
+      if (mounted) setState(() => _downloadingPdf = false);
     }
   }
 
@@ -354,9 +398,27 @@ class _ComplaintReplyScreenState extends ConsumerState<ComplaintReplyScreen> {
                       height: 14,
                       child: CircularProgressIndicator(
                           strokeWidth: 2, color: AppColors.surface))
-                  : const Icon(Icons.download_outlined, size: 15),
+                  : const Icon(Icons.description_outlined, size: 15),
               label: const Text('DOCX'),
               style: ElevatedButton.styleFrom(
+                padding:
+                    const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+                textStyle: const TextStyle(fontSize: 12),
+              ),
+            ),
+            const SizedBox(width: 8),
+            ElevatedButton.icon(
+              onPressed: _downloadingPdf ? null : _downloadPdf,
+              icon: _downloadingPdf
+                  ? const SizedBox(
+                      width: 14,
+                      height: 14,
+                      child: CircularProgressIndicator(
+                          strokeWidth: 2, color: AppColors.surface))
+                  : const Icon(Icons.picture_as_pdf_outlined, size: 15),
+              label: const Text('PDF'),
+              style: ElevatedButton.styleFrom(
+                backgroundColor: const Color(0xFFDC2626),
                 padding:
                     const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
                 textStyle: const TextStyle(fontSize: 12),

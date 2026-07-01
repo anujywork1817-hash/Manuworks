@@ -282,6 +282,7 @@ func main() {
 		protected.POST("/ai/draft-legal", aiH.DraftLegalDocument)
 		protected.POST("/ai/complaint-reply", aiH.ComplaintReplyGenerator)
 		protected.POST("/ai/complaint-reply/download", aiH.DownloadReplyDocx)
+		protected.POST("/ai/complaint-reply/download-pdf", aiH.DownloadReplyPDF)
 		protected.POST("/ocr/scan", aiH.ScanOCR)
 		protected.POST("/ai/compare", aiH.CompareDocuments)
 		protected.POST("/ai/help", aiH.HelpChat)

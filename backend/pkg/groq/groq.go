@@ -11,27 +11,42 @@ import (
 	"regexp"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 )
 
 const (
-	baseURL        = "https://api.groq.com/openai/v1/chat/completions"
-	defaultModel   = "llama-3.1-8b-instant" // 500K TPD vs 100K for 70b-versatile
-	defaultTimeout = 60 * time.Second
+	baseURL            = "https://api.groq.com/openai/v1/chat/completions"
+	openAIBaseURL      = "https://api.openai.com/v1/chat/completions"
+	defaultModel       = "llama-3.1-8b-instant" // 500K TPD vs 100K for 70b-versatile
+	defaultOpenAIModel = "gpt-4o-mini"
+	defaultTimeout     = 60 * time.Second
 )
 
-// Client is the Groq API client
+// Client talks to OpenAI (primary) and Groq (secondary/fallback). Every
+// public method tries OpenAI first; if OpenAI is unset, rate-limited, or
+// out of quota, it transparently falls back to Groq until OpenAI's limit
+// is expected to have reset.
 type Client struct {
-	apiKey     string
-	model      string
+	apiKey     string // Groq API key (fallback provider)
+	model      string // Groq model
 	httpClient *http.Client
+
+	openAIAPIKey string // OpenAI API key (primary provider)
+	openAIModel  string
+
+	mu                  sync.Mutex
+	openAICooldownUntil time.Time // skip OpenAI until this time once it's rate-limited
 }
 
-// Config holds Groq configuration
+// Config holds Groq + OpenAI configuration
 type Config struct {
-	APIKey  string
-	Model   string
+	APIKey  string // Groq API key (fallback)
+	Model   string // Groq model
 	Timeout time.Duration
+
+	OpenAIAPIKey string // OpenAI API key (primary)
+	OpenAIModel  string
 }
 
 // --- Request/Response types ---
@@ -56,6 +71,7 @@ type chatResponse struct {
 	} `json:"choices"`
 	Error *struct {
 		Message string `json:"message"`
+		Code    string `json:"code,omitempty"`
 	} `json:"error,omitempty"`
 }
 
@@ -131,6 +147,10 @@ func NewClient(cfg *Config) *Client {
 	if model == "" {
 		model = defaultModel
 	}
+	openAIModel := cfg.OpenAIModel
+	if openAIModel == "" {
+		openAIModel = defaultOpenAIModel
+	}
 	timeout := cfg.Timeout
 	if timeout == 0 {
 		timeout = defaultTimeout
@@ -143,10 +163,32 @@ func NewClient(cfg *Config) *Client {
 		},
 	}
 	return &Client{
-		apiKey:     cfg.APIKey,
-		model:      model,
-		httpClient: &http.Client{Timeout: timeout, Transport: transport},
+		apiKey:       cfg.APIKey,
+		model:        model,
+		openAIAPIKey: cfg.OpenAIAPIKey,
+		openAIModel:  openAIModel,
+		httpClient:   &http.Client{Timeout: timeout, Transport: transport},
 	}
+}
+
+// openAIAvailable reports whether OpenAI is configured and not currently
+// in a rate-limit cooldown.
+func (c *Client) openAIAvailable() bool {
+	if c.openAIAPIKey == "" {
+		return false
+	}
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return time.Now().After(c.openAICooldownUntil)
+}
+
+// setOpenAICooldown skips OpenAI for the given duration, e.g. after it
+// returns a rate-limit/quota error, so subsequent calls go straight to
+// Groq instead of failing against OpenAI first every time.
+func (c *Client) setOpenAICooldown(d time.Duration) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.openAICooldownUntil = time.Now().Add(d)
 }
 
 // parseRetryAfter parses "try again in 33m14.976s" or "try again in 1.5s".
@@ -179,10 +221,35 @@ func formatWait(d time.Duration) string {
 
 // --- Core API call ---
 
+// generate tries OpenAI (primary) first, then falls back to Groq
+// (secondary) if OpenAI is unset, rate-limited, or out of quota.
 func (c *Client) generate(ctx context.Context, systemPrompt, userPrompt string, maxTokens int) (string, error) {
+	msgs := []message{
+		{Role: "system", Content: systemPrompt},
+		{Role: "user", Content: userPrompt},
+	}
+
+	if c.openAIAvailable() {
+		result, retryAfter, err := c.doRequest(ctx, openAIBaseURL, c.openAIAPIKey, c.openAIModel, msgs, maxTokens, 0.3)
+		if err == nil {
+			return result, nil
+		}
+		if retryAfter > 0 {
+			c.setOpenAICooldown(retryAfter)
+		}
+		// Fall through to Groq for this request.
+	}
+
+	return c.generateGroq(ctx, msgs, maxTokens)
+}
+
+// generateGroq calls Groq with the retry/backoff behavior Groq needs for
+// its own rate limits. Used directly when OpenAI isn't configured, and as
+// the fallback path when OpenAI fails.
+func (c *Client) generateGroq(ctx context.Context, msgs []message, maxTokens int) (string, error) {
 	const maxRetries = 2
 	for attempt := 0; attempt <= maxRetries; attempt++ {
-		result, retryAfter, err := c.doGenerate(ctx, systemPrompt, userPrompt, maxTokens)
+		result, retryAfter, err := c.doRequest(ctx, baseURL, c.apiKey, c.model, msgs, maxTokens, 0.3)
 		if err == nil {
 			return result, nil
 		}
@@ -203,15 +270,16 @@ func (c *Client) generate(ctx context.Context, systemPrompt, userPrompt string, 
 	return "", fmt.Errorf("max retries exceeded")
 }
 
-func (c *Client) doGenerate(ctx context.Context, systemPrompt, userPrompt string, maxTokens int) (string, time.Duration, error) {
+// doRequest performs a single chat-completion call against the given
+// provider endpoint. The returned duration is non-zero only when the
+// provider signalled a rate limit (HTTP 429), so callers know how long to
+// back off (Groq) or how long to skip this provider entirely (OpenAI).
+func (c *Client) doRequest(ctx context.Context, url, apiKey, model string, msgs []message, maxTokens int, temperature float64) (string, time.Duration, error) {
 	reqBody := chatRequest{
-		Model: c.model,
-		Messages: []message{
-			{Role: "system", Content: systemPrompt},
-			{Role: "user", Content: userPrompt},
-		},
+		Model:       model,
+		Messages:    msgs,
 		MaxTokens:   maxTokens,
-		Temperature: 0.3,
+		Temperature: temperature,
 	}
 
 	body, err := json.Marshal(reqBody)
@@ -219,11 +287,11 @@ func (c *Client) doGenerate(ctx context.Context, systemPrompt, userPrompt string
 		return "", 0, fmt.Errorf("marshal request: %w", err)
 	}
 
-	req, err := http.NewRequestWithContext(ctx, "POST", baseURL, bytes.NewReader(body))
+	req, err := http.NewRequestWithContext(ctx, "POST", url, bytes.NewReader(body))
 	if err != nil {
 		return "", 0, fmt.Errorf("create request: %w", err)
 	}
-	req.Header.Set("Authorization", "Bearer "+c.apiKey)
+	req.Header.Set("Authorization", "Bearer "+apiKey)
 	req.Header.Set("Content-Type", "application/json")
 
 	resp, err := c.httpClient.Do(req)
@@ -246,16 +314,38 @@ func (c *Client) doGenerate(ctx context.Context, systemPrompt, userPrompt string
 		msg := chatResp.Error.Message
 		if resp.StatusCode == 429 {
 			wait := parseRetryAfter(msg)
-			return "", wait, fmt.Errorf("groq rate limit: %s", msg)
+			// Hard billing/quota limit — no "try again in Xs" hint in the
+			// message, so don't hammer it; recheck again in an hour.
+			if chatResp.Error.Code == "insufficient_quota" {
+				wait = time.Hour
+			}
+			return "", wait, fmt.Errorf("rate limit: %s", msg)
 		}
-		return "", 0, fmt.Errorf("groq api error: %s", msg)
+		return "", 0, fmt.Errorf("api error: %s", msg)
 	}
 
 	if len(chatResp.Choices) == 0 {
-		return "", 0, fmt.Errorf("empty response from Groq")
+		return "", 0, fmt.Errorf("empty response")
 	}
 
 	return chatResp.Choices[0].Message.Content, 0, nil
+}
+
+// chatCompletion is like generate but for callers that build their own
+// full message list (Chat, HelpChat) instead of a single system+user pair.
+// Same OpenAI-first, Groq-fallback behavior, single attempt on each side.
+func (c *Client) chatCompletion(ctx context.Context, msgs []message, maxTokens int, temperature float64) (string, error) {
+	if c.openAIAvailable() {
+		result, retryAfter, err := c.doRequest(ctx, openAIBaseURL, c.openAIAPIKey, c.openAIModel, msgs, maxTokens, temperature)
+		if err == nil {
+			return result, nil
+		}
+		if retryAfter > 0 {
+			c.setOpenAICooldown(retryAfter)
+		}
+	}
+	result, _, err := c.doRequest(ctx, baseURL, c.apiKey, c.model, msgs, maxTokens, temperature)
+	return result, err
 }
 
 // parseJSON extracts JSON from response, handling markdown code blocks
@@ -516,40 +606,7 @@ func (c *Client) Chat(ctx context.Context, text string, history []ChatMessage, u
 	}
 	msgs = append(msgs, message{Role: "user", Content: userMessage})
 
-	reqBody := chatRequest{Model: c.model, Messages: msgs, MaxTokens: 1000, Temperature: 0.3}
-	body, err := json.Marshal(reqBody)
-	if err != nil {
-		return "", err
-	}
-	req, err := http.NewRequestWithContext(ctx, "POST", baseURL, bytes.NewReader(body))
-	if err != nil {
-		return "", err
-	}
-	req.Header.Set("Authorization", "Bearer "+c.apiKey)
-	req.Header.Set("Content-Type", "application/json")
-
-	resp, err := c.httpClient.Do(req)
-	if err != nil {
-		return "", err
-	}
-	defer resp.Body.Close()
-
-	respBody, err := io.ReadAll(resp.Body)
-	if err != nil {
-		return "", err
-	}
-
-	var chatResp chatResponse
-	if err := json.Unmarshal(respBody, &chatResp); err != nil {
-		return "", err
-	}
-	if chatResp.Error != nil {
-		return "", fmt.Errorf("groq: %s", chatResp.Error.Message)
-	}
-	if len(chatResp.Choices) == 0 {
-		return "", fmt.Errorf("empty response")
-	}
-	return chatResp.Choices[0].Message.Content, nil
+	return c.chatCompletion(ctx, msgs, 1000, 0.3)
 }
 
 type DraftResponse struct {
@@ -944,40 +1001,7 @@ Answer questions helpfully and concisely. For how-to questions, give clear numbe
 	}
 	msgs = append(msgs, message{Role: "user", Content: userMessage})
 
-	reqBody := chatRequest{Model: c.model, Messages: msgs, MaxTokens: 600, Temperature: 0.5}
-	body, err := json.Marshal(reqBody)
-	if err != nil {
-		return "", err
-	}
-	req, err := http.NewRequestWithContext(ctx, "POST", baseURL, bytes.NewReader(body))
-	if err != nil {
-		return "", err
-	}
-	req.Header.Set("Authorization", "Bearer "+c.apiKey)
-	req.Header.Set("Content-Type", "application/json")
-
-	resp, err := c.httpClient.Do(req)
-	if err != nil {
-		return "", err
-	}
-	defer resp.Body.Close()
-
-	respBody, err := io.ReadAll(resp.Body)
-	if err != nil {
-		return "", err
-	}
-
-	var chatResp chatResponse
-	if err := json.Unmarshal(respBody, &chatResp); err != nil {
-		return "", err
-	}
-	if chatResp.Error != nil {
-		return "", fmt.Errorf("groq: %s", chatResp.Error.Message)
-	}
-	if len(chatResp.Choices) == 0 {
-		return "", fmt.Errorf("empty response")
-	}
-	return chatResp.Choices[0].Message.Content, nil
+	return c.chatCompletion(ctx, msgs, 600, 0.5)
 }
 
 // ─── Complaint Reply Generator ────────────────────────────────────────────────
@@ -993,23 +1017,26 @@ type ComplaintReplyResponse struct {
 // an existing reply template, preserving its structure, legal language, and tone
 // while replacing all case-specific facts, parties, and allegations.
 func (c *Client) GenerateComplaintReply(ctx context.Context, complaintText, existingReplyText string) (*ComplaintReplyResponse, error) {
-	system := `You are a senior Indian advocate with 20 years of experience drafting legal replies, written statements, and counter-affidavits. You specialize in adapting existing reply templates to new complaints while preserving their legal structure and language.`
+	system := `You are a senior Indian advocate with 20 years of experience drafting legal replies, written statements, and counter-affidavits. You specialize in adapting existing reply templates to new complaints while preserving their legal structure and language.
+
+IMPORTANT LANGUAGE RULE: The complaint may be written in any Indian regional language — Marathi, Hindi, Gujarati, Tamil, Telugu, Kannada, Bengali, or any other. Regardless of the complaint's language, you MUST write the complete new reply ENTIRELY IN ENGLISH. Translate and understand the complaint's allegations, facts, parties, and dates, then draft the reply in formal legal English.`
 
 	prompt := fmt.Sprintf(`You are given:
-1. A NEW COMPLAINT that requires a reply
+1. A NEW COMPLAINT that requires a reply (may be in Marathi, Hindi, or any Indian language — read and understand it)
 2. An EXISTING REPLY (template) for a different but similar complaint
 
 Your task:
-- Carefully read the new complaint: identify parties, allegations, facts, dates, case number, court, relief sought
+- Carefully read the new complaint in its original language: identify parties, allegations, facts, dates, case number, court, relief sought
 - Analyze the existing reply: understand its structure, numbered paragraphs, preliminary objections, legal language, tone, and signature block
-- Generate a COMPLETE NEW REPLY by adapting the existing reply to address the new complaint:
+- Generate a COMPLETE NEW REPLY IN ENGLISH by adapting the existing reply to address the new complaint:
   * Preserve the exact document structure (same sections, heading pattern, paragraph numbering style)
   * Preserve all standard preliminary objections, legal submissions, and formal language patterns
-  * Replace case-specific details: party names, dates, allegations, case/complaint number, facts
+  * Replace case-specific details: party names, dates, allegations, case/complaint number, facts (translated to English)
   * Adapt legal arguments paragraph by paragraph to address the new complaint's specific allegations
   * Do NOT copy verbatim from the complaint text; respond to each allegation in legal terms
   * Maintain the same tone (formal, professional, legally precise)
   * Include proper signature block, verification, and date placeholders
+  * THE REPLY MUST BE WRITTEN ENTIRELY IN ENGLISH regardless of the complaint's language
 
 Output format — follow EXACTLY (do not change the markers):
 ---REPLY---

@@ -161,7 +161,17 @@ func main() {
 	// ─── 11. Wire services ───────────────────────────────────────────────────────
 	authSvc := authService.New(authRepository, cfg, nil)
 	documentSvc := docService.NewDocumentService(documentRepository, cfg)
-	groqClient := groq.NewClient(&groq.Config{APIKey: cfg.Groq.APIKey, Model: cfg.Groq.Model})
+	groqClient := groq.NewClient(&groq.Config{
+		APIKey:       cfg.Groq.APIKey,
+		Model:        cfg.Groq.Model,
+		OpenAIAPIKey: cfg.OpenAI.APIKey,
+		OpenAIModel:  cfg.OpenAI.Model,
+	})
+	if cfg.OpenAI.APIKey != "" {
+		logger.Info("OpenAI configured as primary AI provider, Groq as fallback")
+	} else {
+		logger.Info("OPENAI_API_KEY not set — using Groq as the AI provider")
+	}
     aiSvc := aiService.NewAIService(documentRepository, geminiClient, groqClient, qdrantClient, ocrService)
 	searchSvc := searchService.NewSearchService(db, geminiClient, qdrantClient)
 	matterSvc := matterService.NewMatterService(matterRepository)

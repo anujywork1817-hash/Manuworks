@@ -450,7 +450,9 @@ func (h *AIHandler) ComplaintReplyGenerator(c *gin.Context) {
 	replyTmp.Close()
 
 	// ── Extract text from complaint PDF ────────────────────────────────────────
-	complaintResult, err := h.ocrService.ExtractText(c.Request.Context(), complaintTmp.Name())
+	// Use multilingual OCR so complaints written in Marathi, Hindi, or English are all read.
+	// pdftotext (used first internally) already handles Unicode so this mostly affects scanned PDFs.
+	complaintResult, err := h.ocrService.ExtractTextWithLang(c.Request.Context(), complaintTmp.Name(), "eng+mar+hin")
 	if err != nil || complaintResult.Text == "" {
 		msg := "Failed to extract text from complaint PDF — ensure it is a readable PDF"
 		if err != nil {
@@ -513,6 +515,32 @@ func (h *AIHandler) DownloadReplyDocx(c *gin.Context) {
 
 	c.Header("Content-Disposition", `attachment; filename="`+filename+`"`)
 	c.Data(http.StatusOK, "application/vnd.openxmlformats-officedocument.wordprocessingml.document", docxBytes)
+}
+
+// DownloadReplyPDF accepts the generated reply text and returns it as a .pdf binary.
+func (h *AIHandler) DownloadReplyPDF(c *gin.Context) {
+	var req struct {
+		Text     string `json:"text" binding:"required"`
+		Filename string `json:"filename"`
+	}
+	if err := c.ShouldBindJSON(&req); err != nil || req.Text == "" {
+		respond(c, http.StatusBadRequest, false, "text is required", nil)
+		return
+	}
+
+	pdfBytes, err := ocr.CreatePDF(req.Text)
+	if err != nil {
+		respond(c, http.StatusInternalServerError, false, "failed to create PDF file", nil)
+		return
+	}
+
+	filename := req.Filename
+	if filename == "" {
+		filename = "complaint_reply.pdf"
+	}
+
+	c.Header("Content-Disposition", `attachment; filename="`+filename+`"`)
+	c.Data(http.StatusOK, "application/pdf", pdfBytes)
 }
 
 func (h *AIHandler) ScanOCR(c *gin.Context) {

@@ -13,6 +13,7 @@ import (
 // Config holds all application configuration loaded from environment variables
 type Config struct {
     Groq    GroqConfig
+    OpenAI  OpenAIConfig
 	App      AppConfig
 	Postgres PostgresConfig
 	Redis    RedisConfig
@@ -203,6 +204,10 @@ func Load() *Config {
             APIKey: getStr("GROQ_API_KEY", ""),
             Model:  getStr("GROQ_MODEL", "llama-3.3-70b-versatile"),
         },
+        OpenAI: OpenAIConfig{
+            APIKey: getStr("OPENAI_API_KEY", ""),
+            Model:  getStr("OPENAI_MODEL", "gpt-4o-mini"),
+        },
         Gemini: GeminiConfig{
 			APIKey:              getStrRequired("GEMINI_API_KEY"),
 			Model:               getStr("GEMINI_MODEL", "gemini-1.5-flash"),
@@ -391,6 +396,13 @@ func trimSpace(s string) string {
 
 
 type GroqConfig struct {
+    APIKey string
+    Model  string
+}
+
+// OpenAIConfig holds the primary AI provider's settings. Groq (above) is
+// used as the automatic fallback whenever OpenAI is unset or rate-limited.
+type OpenAIConfig struct {
     APIKey string
     Model  string
 }

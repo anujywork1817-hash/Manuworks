@@ -66,6 +66,8 @@ services:
       # AI — set manually in Render dashboard after deploy
       - key: GEMINI_API_KEY
         sync: false
+      - key: OPENAI_API_KEY
+        sync: false
       - key: GROQ_API_KEY
         sync: false
 

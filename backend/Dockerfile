@@ -43,14 +43,13 @@ FROM debian:bullseye-slim AS runtime
 RUN apt-get update && apt-get install -y --no-install-recommends \
     tesseract-ocr \
     tesseract-ocr-eng \
+    tesseract-ocr-mar \
+    tesseract-ocr-hin \
     poppler-utils \
     ca-certificates \
     tzdata \
     wget \
     && rm -rf /var/lib/apt/lists/*
-
-# Optional: Hindi OCR support
-# RUN apt-get update && apt-get install -y tesseract-ocr-hin && rm -rf /var/lib/apt/lists/*
 
 # Create non-root user for security
 RUN groupadd -r docassist && useradd -r -g docassist -u 1001 docassist

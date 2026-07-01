@@ -85,6 +85,10 @@ func (s *Service) ExtractFromFile(ctx context.Context, filePath string) (*Extrac
 // extractFromPDF converts each PDF page to an image then runs Tesseract on each.
 // Requires: pdftoppm (from poppler-utils) installed on the system.
 func (s *Service) extractFromPDF(ctx context.Context, pdfPath string) (*ExtractResult, error) {
+	return s.extractFromPDFWithLang(ctx, pdfPath, s.cfg.Lang)
+}
+
+func (s *Service) extractFromPDFWithLang(ctx context.Context, pdfPath, lang string) (*ExtractResult, error) {
 	tmpDir, err := os.MkdirTemp("", "ocr_pdf_*")
 	if err != nil {
 		return nil, fmt.Errorf("failed to create temp dir: %w", err)
@@ -163,7 +167,7 @@ func (s *Service) extractFromPDF(ctx context.Context, pdfPath string) (*ExtractR
 				Text:       cleaned,
 				PageCount:  estimatePageCount(cleaned),
 				WordCount:  countWords(cleaned),
-				Language:   s.cfg.Lang,
+				Language:   lang,
 				Confidence: 90.0,
 			}, nil
 		}
@@ -182,7 +186,7 @@ func (s *Service) extractFromPDF(ctx context.Context, pdfPath string) (*ExtractR
 		default:
 		}
 
-		pr, err := s.ocrImageFile(pagePath, s.cfg.Lang)
+		pr, err := s.ocrImageFile(pagePath, lang)
 		if err != nil {
 			logger.Warn("OCR failed for page",
 				logger.Int("page", i+1),
@@ -209,7 +213,7 @@ func (s *Service) extractFromPDF(ctx context.Context, pdfPath string) (*ExtractR
 	return &ExtractResult{
 		Text:       cleanText(allText.String()),
 		PageCount:  len(pages),
-		Language:   s.cfg.Lang,
+		Language:   lang,
 		Confidence: avgConfidence,
 	}, nil
 }
@@ -357,6 +361,17 @@ func (s *Service) ExtractFromTXT(ctx context.Context, filePath string) (*Extract
 // ExtractText is the main entry point — routes to the correct extractor
 // based on file extension, no OCR for digital text files.
 func (s *Service) ExtractText(ctx context.Context, filePath string) (*ExtractResult, error) {
+	return s.ExtractTextWithLang(ctx, filePath, s.cfg.Lang)
+}
+
+// ExtractTextWithLang is like ExtractText but uses a custom Tesseract language
+// for OCR (e.g. "eng+mar+hin" for multilingual documents).
+// For digital PDFs the lang only affects the ExtractResult.Language field;
+// for scanned PDFs it controls which language model Tesseract loads.
+func (s *Service) ExtractTextWithLang(ctx context.Context, filePath, lang string) (*ExtractResult, error) {
+	if lang == "" {
+		lang = s.cfg.Lang
+	}
 	ext := strings.ToLower(strings.TrimPrefix(filepath.Ext(filePath), "."))
 
 	switch ext {
@@ -365,19 +380,20 @@ func (s *Service) ExtractText(ctx context.Context, filePath string) (*ExtractRes
 	case "docx", "doc":
 		return s.ExtractFromDOCX(ctx, filePath)
 	case "pdf":
-		// First try to extract digital text from PDF (faster, more accurate)
+		// First try to extract digital text from PDF (faster, more accurate).
+		// pdftotext returns Unicode so it works for any language without Tesseract.
 		if text, err := extractDigitalPDFText(filePath); err == nil && len(text) > 100 {
 			wc := countWords(text)
 			return &ExtractResult{
 				Text:       cleanText(text),
 				PageCount:  estimatePageCount(text),
 				WordCount:  wc,
-				Language:   s.cfg.Lang,
+				Language:   lang,
 				Confidence: 100.0,
 			}, nil
 		}
 		// Fall back to OCR for scanned PDFs
-		return s.extractFromPDF(ctx, filePath)
+		return s.extractFromPDFWithLang(ctx, filePath, lang)
 	default:
 		return s.ExtractFromFile(ctx, filePath)
 	}

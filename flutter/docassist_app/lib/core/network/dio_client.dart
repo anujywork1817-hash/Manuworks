@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:dio/dio.dart';
 import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:flutter_riverpod/flutter_riverpod.dart';
@@ -133,10 +135,24 @@ class TokenStorage {
 
 class AuthInterceptor extends Interceptor {
   final Dio _dio;
+  // Separate, interceptor-free Dio for the refresh call itself — reusing
+  // _dio here would re-enter this same interceptor if the refresh token is
+  // also invalid (its own 401 would trigger onError again), and that
+  // request would then hang forever since it's dropped instead of resolved.
+  final Dio _refreshDio;
   bool _isRefreshing = false;
-  final List<RequestOptions> _pendingRequests = [];
+  Completer<void>? _refreshCompleter;
 
-  AuthInterceptor(this._dio);
+  AuthInterceptor(this._dio)
+      : _refreshDio = Dio(BaseOptions(
+          baseUrl: ApiConstants.baseUrl,
+          connectTimeout: ApiConstants.connectTimeout,
+          receiveTimeout: ApiConstants.receiveTimeout,
+          headers: {
+            'Content-Type': 'application/json',
+            'Accept': 'application/json',
+          },
+        ));
 
   @override
   Future<void> onRequest(
@@ -164,47 +180,63 @@ class AuthInterceptor extends Interceptor {
     DioException err,
     ErrorInterceptorHandler handler,
   ) async {
-    if (err.response?.statusCode == 401) {
-      if (_isRefreshing) {
-        _pendingRequests.add(err.requestOptions);
-        return;
-      }
+    if (err.response?.statusCode != 401) {
+      return handler.next(err);
+    }
 
-      _isRefreshing = true;
-
+    // A refresh is already in flight for another request — wait for it
+    // instead of dropping this request, then retry with the new token.
+    if (_isRefreshing) {
       try {
-        final refreshToken = await TokenStorage.getRefreshToken();
-        if (refreshToken == null) {
-          await TokenStorage.clearAll();
-          return handler.next(err);
-        }
-
-        final response = await _dio.post(
-          '/auth/refresh',
-          data: {'refresh_token': refreshToken},
-          options: Options(headers: {'Authorization': ''}),
+        await _refreshCompleter?.future;
+        final token = await TokenStorage.getAccessToken();
+        if (token == null) return handler.next(err);
+        final retryResponse = await _dio.fetch(
+          err.requestOptions..headers['Authorization'] = 'Bearer $token',
         );
-
-        if (response.statusCode == 200) {
-          final data = response.data['data'];
-          await TokenStorage.saveTokens(
-            accessToken: data['access_token'],
-            refreshToken: data['refresh_token'],
-          );
-
-          final retryResponse = await _dio.fetch(err.requestOptions
-            ..headers['Authorization'] = 'Bearer ${data['access_token']}');
-          return handler.resolve(retryResponse);
-        }
+        return handler.resolve(retryResponse);
       } catch (_) {
-        await TokenStorage.clearAll();
-      } finally {
-        _isRefreshing = false;
-        _pendingRequests.clear();
+        return handler.next(err);
       }
     }
 
-    handler.next(err);
+    _isRefreshing = true;
+    _refreshCompleter = Completer<void>();
+
+    try {
+      final refreshToken = await TokenStorage.getRefreshToken();
+      if (refreshToken == null) {
+        await TokenStorage.clearAll();
+        return handler.next(err);
+      }
+
+      final response = await _refreshDio.post(
+        '/auth/refresh',
+        data: {'refresh_token': refreshToken},
+      );
+
+      if (response.statusCode == 200) {
+        final data = response.data['data'];
+        await TokenStorage.saveTokens(
+          accessToken: data['access_token'],
+          refreshToken: data['refresh_token'],
+        );
+
+        final retryResponse = await _dio.fetch(err.requestOptions
+          ..headers['Authorization'] = 'Bearer ${data['access_token']}');
+        return handler.resolve(retryResponse);
+      }
+
+      await TokenStorage.clearAll();
+      return handler.next(err);
+    } catch (_) {
+      await TokenStorage.clearAll();
+      return handler.next(err);
+    } finally {
+      _isRefreshing = false;
+      _refreshCompleter?.complete();
+      _refreshCompleter = null;
+    }
   }
 }
 
@@ -228,7 +260,9 @@ class DioClient {
           'Content-Type': 'application/json',
           'Accept': 'application/json',
         },
-        validateStatus: (status) => status != null && status < 500,
+        // Only 2xx counts as success — 401 must reach onError below so the
+        // AuthInterceptor can silently refresh the token and retry.
+        validateStatus: (status) => status != null && status < 400,
       ),
     );
 

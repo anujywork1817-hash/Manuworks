@@ -13,6 +13,8 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/yourusername/docassist/pkg/logger"
 )
 
 const (
@@ -232,10 +234,15 @@ func (c *Client) generate(ctx context.Context, systemPrompt, userPrompt string, 
 	if c.openAIAvailable() {
 		result, retryAfter, err := c.doRequest(ctx, openAIBaseURL, c.openAIAPIKey, c.openAIModel, msgs, maxTokens, 0.3)
 		if err == nil {
+			logger.Debug("AI request served by OpenAI")
 			return result, nil
 		}
 		if retryAfter > 0 {
 			c.setOpenAICooldown(retryAfter)
+			logger.Warn("OpenAI rate-limited, switching to Groq until it resets",
+				logger.Err(err), logger.Str("resume_at", time.Now().Add(retryAfter).Format(time.RFC3339)))
+		} else {
+			logger.Warn("OpenAI request failed, falling back to Groq for this request", logger.Err(err))
 		}
 		// Fall through to Groq for this request.
 	}
@@ -338,10 +345,15 @@ func (c *Client) chatCompletion(ctx context.Context, msgs []message, maxTokens i
 	if c.openAIAvailable() {
 		result, retryAfter, err := c.doRequest(ctx, openAIBaseURL, c.openAIAPIKey, c.openAIModel, msgs, maxTokens, temperature)
 		if err == nil {
+			logger.Debug("AI request served by OpenAI")
 			return result, nil
 		}
 		if retryAfter > 0 {
 			c.setOpenAICooldown(retryAfter)
+			logger.Warn("OpenAI rate-limited, switching to Groq until it resets",
+				logger.Err(err), logger.Str("resume_at", time.Now().Add(retryAfter).Format(time.RFC3339)))
+		} else {
+			logger.Warn("OpenAI request failed, falling back to Groq for this request", logger.Err(err))
 		}
 	}
 	result, _, err := c.doRequest(ctx, baseURL, c.apiKey, c.model, msgs, maxTokens, temperature)

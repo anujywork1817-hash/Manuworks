@@ -805,7 +805,10 @@ func (s *aiService) DraftDocument(ctx context.Context, userID uuid.UUID, docType
 func indiaOCRLang(docLang string) string {
 	switch strings.ToLower(docLang) {
 	case "mr", "marathi":
-		return "eng+mar"
+		// eng+mar: standard Devanagari Marathi
+		// mod: Modi script (historical Marathi cursive used in old government records)
+		// san: Sanskrit Devanagari — shares glyph forms, helps with stylised Marathi fonts
+		return "eng+mar+mod+san"
 	case "hi", "hindi":
 		return "eng+hin"
 	case "gu", "gujarati":
@@ -815,9 +818,7 @@ func indiaOCRLang(docLang string) string {
 	case "te", "telugu":
 		return "eng+tel"
 	default:
-		// Default: include both Marathi and Hindi since most Indian legal
-		// documents in Maharashtra are in one of these three scripts.
-		return "eng+mar+hin"
+		return "eng+mar+hin+mod"
 	}
 }
 

@@ -237,6 +237,9 @@ func (s *Service) extractFromImage(ctx context.Context, imagePath string) (*Extr
 // ─── Core Tesseract Call ──────────────────────────────────────────────────────
 
 // ocrImageFile runs Tesseract CLI on a single image file.
+// If the lang string includes optional packages (mod, san) that are not
+// installed, it retries automatically with those packages stripped out so a
+// missing tessdata file never silently kills OCR for the whole document.
 func (s *Service) ocrImageFile(imagePath, lang string) (*PageResult, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -245,14 +248,34 @@ func (s *Service) ocrImageFile(imagePath, lang string) (*PageResult, error) {
 
 	cmd := exec.Command("tesseract", imagePath, "stdout", "-l", tessLang, "--oem", "3", "--psm", "3")
 	output, err := cmd.Output()
-	if err != nil {
-		return nil, fmt.Errorf("tesseract failed on %s: %w", filepath.Base(imagePath), err)
+	if err == nil {
+		return &PageResult{Text: string(output), Confidence: 85.0}, nil
 	}
 
-	return &PageResult{
-		Text:       string(output),
-		Confidence: 85.0,
-	}, nil
+	// If tessdata for an optional language (mod, san) is missing, Tesseract
+	// exits non-zero with "Could not initialize tesseract". Strip those optional
+	// langs and retry before giving up.
+	errMsg := strings.ToLower(err.Error())
+	if strings.Contains(tessLang, "+mod") || strings.Contains(tessLang, "+san") {
+		if strings.Contains(errMsg, "tesseract") || strings.Contains(errMsg, "exit") {
+			fallback := tessLang
+			for _, opt := range []string{"+mod", "mod+", "+san", "san+"} {
+				fallback = strings.ReplaceAll(fallback, opt, "")
+			}
+			if fallback != tessLang {
+				logger.Warn("Retrying OCR without optional tessdata",
+					logger.Str("dropped_from", tessLang),
+					logger.Str("fallback", fallback),
+				)
+				cmd2 := exec.Command("tesseract", imagePath, "stdout", "-l", fallback, "--oem", "3", "--psm", "3")
+				if out2, err2 := cmd2.Output(); err2 == nil {
+					return &PageResult{Text: string(out2), Confidence: 85.0}, nil
+				}
+			}
+		}
+	}
+
+	return nil, fmt.Errorf("tesseract failed on %s: %w", filepath.Base(imagePath), err)
 }
 
 // toTesseractLang maps ISO 639-1 2-letter codes to Tesseract 3-letter codes.

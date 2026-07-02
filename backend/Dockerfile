@@ -45,11 +45,20 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     tesseract-ocr-eng \
     tesseract-ocr-mar \
     tesseract-ocr-hin \
+    tesseract-ocr-san \
     poppler-utils \
     ca-certificates \
     tzdata \
     wget \
     && rm -rf /var/lib/apt/lists/*
+
+# Download Modi script tessdata (mod — historical Marathi cursive script).
+# Not available as a Debian package; fetched from the official Tesseract repo.
+# If the download fails the build continues — OCR falls back to eng+mar.
+RUN TESSDATA=$(find /usr/share/tesseract-ocr -name tessdata -type d | head -1) && \
+    wget -qO "$TESSDATA/mod.traineddata" \
+    "https://github.com/tesseract-ocr/tessdata/raw/main/mod.traineddata" \
+    || echo "WARN: mod.traineddata not available, Modi script OCR disabled"
 
 # Create non-root user for security
 RUN groupadd -r docassist && useradd -r -g docassist -u 1001 docassist

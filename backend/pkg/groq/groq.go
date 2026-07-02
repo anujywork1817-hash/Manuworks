@@ -23,6 +23,11 @@ const (
 	defaultModel       = "llama-3.1-8b-instant" // 500K TPD vs 100K for 70b-versatile
 	defaultOpenAIModel = "gpt-4o-mini"
 	defaultTimeout     = 60 * time.Second
+
+	// indiaDocEngRule is appended to every document-analysis system prompt so
+	// the model always replies in English even when the source document is
+	// written in Marathi, Hindi, or another Indian regional language.
+	indiaDocEngRule = " The document may be in any Indian language (Marathi, Hindi, etc.) — always respond ENTIRELY IN ENGLISH."
 )
 
 // groqKeySlot tracks one Groq API key and its daily-limit cooldown.
@@ -450,7 +455,7 @@ func parseJSON(text string) string {
 // --- AI Methods ---
 
 func (c *Client) Summarize(ctx context.Context, text string) (*SummaryResponse, error) {
-	system := `You are a document analysis assistant. Always respond with valid JSON only, no markdown.`
+	system := `You are a document analysis assistant. Always respond with valid JSON only, no markdown.` + indiaDocEngRule
 	prompt := fmt.Sprintf(`Summarize this document and extract key points. Respond ONLY with this JSON:
 {"summary":"<2-3 sentence summary>","key_points":["point1","point2","point3"],"word_count":%d}
 
@@ -470,7 +475,7 @@ Document:
 }
 
 func (c *Client) ExtractKeyPoints(ctx context.Context, text string) (*KeyPointsResponse, error) {
-	system := `You are a document analysis assistant. Always respond with valid JSON only, no markdown.`
+	system := `You are a document analysis assistant. Always respond with valid JSON only, no markdown.` + indiaDocEngRule
 	prompt := fmt.Sprintf(`Extract the key points from this document. Respond ONLY with this JSON:
 {"key_points":["point1","point2","point3","point4","point5"],"category":"<document category>"}
 
@@ -490,7 +495,7 @@ Document:
 }
 
 func (c *Client) ExtractTimeline(ctx context.Context, text string) (*TimelineResponse, error) {
-	system := `You are a document analysis assistant. Always respond with valid JSON only, no markdown.`
+	system := `You are a document analysis assistant. Always respond with valid JSON only, no markdown.` + indiaDocEngRule
 	prompt := fmt.Sprintf(`Extract all dates and timeline events from this document.
 Sort events STRICTLY in chronological order from the earliest date to the latest date.
 Use the most specific date format available (e.g. "15 March 1996", "June 2003", "2019").
@@ -565,7 +570,7 @@ func sortTimelineEvents(events []TimelineEvent) {
 }
 
 func (c *Client) ExtractActionItems(ctx context.Context, text string) (*ActionItemsResponse, error) {
-	system := `You are a document analysis assistant. Always respond with valid JSON only, no markdown.`
+	system := `You are a document analysis assistant. Always respond with valid JSON only, no markdown.` + indiaDocEngRule
 	prompt := fmt.Sprintf(`Extract all action items and tasks from this document. Respond ONLY with this JSON:
 {"action_items":[{"action":"<task>","priority":"high/medium/low","deadline":"<deadline or Not specified>","owner":"<owner or Not specified>"}]}
 
@@ -585,7 +590,7 @@ Document:
 }
 
 func (c *Client) AnalyzeDocument(ctx context.Context, text string) (*AnalysisResponse, error) {
-	system := `You are a document analysis assistant. Always respond with valid JSON only, no markdown.`
+	system := `You are a document analysis assistant. Always respond with valid JSON only, no markdown.` + indiaDocEngRule
 	prompt := fmt.Sprintf(`Analyze this document. Respond ONLY with this JSON:
 {"document_type":"<type>","sentiment":"positive/negative/neutral","risk_level":"low/medium/high","insights":["insight1","insight2","insight3"],"metadata":{"language":"English"}}
 
@@ -633,7 +638,7 @@ func (c *Client) Translate(ctx context.Context, text, targetLanguage string) (*T
 }
 
 func (c *Client) AnswerQuestion(ctx context.Context, text, question string) (*QAResponse, error) {
-	system := `You are a document Q&A assistant. Answer based only on the provided document. Always respond with valid JSON only, no markdown.`
+	system := `You are a document Q&A assistant. Answer based only on the provided document. Always respond with valid JSON only, no markdown.` + indiaDocEngRule
 	prompt := fmt.Sprintf(`Answer this question based on the document. Respond ONLY with this JSON:
 {"answer":"<detailed answer>","confidence":"high/medium/low","sources":["<relevant quote>"]}
 
@@ -655,7 +660,7 @@ Document:
 }
 
 func (c *Client) GenerateReport(ctx context.Context, text, reportType string) (*ReportResponse, error) {
-	system := `You are a professional report writer. Always respond with valid JSON only, no markdown.`
+	system := `You are a professional report writer. Always respond with valid JSON only, no markdown.` + indiaDocEngRule
 	prompt := fmt.Sprintf(`Generate a %s report for this document. Respond ONLY with this JSON:
 {"title":"<report title>","content":"<full report>","format":"%s"}
 
@@ -677,7 +682,7 @@ Document:
 // Chat answers a freeform question about the document, optionally using
 // prior conversation history for context.
 func (c *Client) Chat(ctx context.Context, text string, history []ChatMessage, userMessage string) (string, error) {
-	msgs := []message{{Role: "system", Content: "You are a document assistant. Answer questions based on this document:\n\n" + text}}
+	msgs := []message{{Role: "system", Content: "You are a document assistant. Answer questions based on this document." + indiaDocEngRule + "\n\n" + text}}
 	for _, h := range history {
 		msgs = append(msgs, message{Role: h.Role, Content: h.Content})
 	}
@@ -842,7 +847,7 @@ Write the full document now:`, req.DocumentType, req.CourtName, caseRef, req.Pet
 }
 
 func (c *Client) CheckGrammar(ctx context.Context, text string) (*GrammarCheckResponse, error) {
-    system := `You are a professional English language editor specializing in legal documents. Identify grammatical errors precisely. Always respond with valid JSON only, no markdown.`
+    system := `You are a professional English language editor specializing in legal documents. Identify grammatical errors precisely. Always respond with valid JSON only, no markdown.` + indiaDocEngRule
     prompt := fmt.Sprintf(`Check this legal document for grammatical errors and language mistakes.
 Respond ONLY with this exact JSON:
 {"score":<0-100>,"issue_count":<number>,"issues":[{"type":"<category>","original":"<exact wrong text from document>","correction":"<corrected text>","explanation":"<brief reason>"}],"summary":"<1-2 sentence overall assessment>"}
@@ -877,7 +882,7 @@ Document:
 }
 
 func (c *Client) AutoTag(ctx context.Context, text string) (*AutoTagsResponse, error) {
-    system := `You are an Indian legal document classification expert. Generate precise tags for legal documents. Always respond with valid JSON only, no markdown.`
+    system := `You are an Indian legal document classification expert. Generate precise tags for legal documents. Always respond with valid JSON only, no markdown.` + indiaDocEngRule
     prompt := fmt.Sprintf(`Analyze this legal document and generate classification tags.
 Respond ONLY with this exact JSON:
 {"tags":["tag1","tag2","tag3"],"practice_area":"<primary area of law>","document_type":"<type>","complexity":"simple/moderate/complex"}
@@ -913,7 +918,7 @@ Document:
 }
 
 func (c *Client) ExtractDeadlines(ctx context.Context, text string) (*DeadlineResponse, error) {
-    system := `You are a legal deadline tracking expert specializing in Indian law. Extract all time-bound obligations and deadlines. Always respond with valid JSON only, no markdown.`
+    system := `You are a legal deadline tracking expert specializing in Indian law. Extract all time-bound obligations and deadlines. Always respond with valid JSON only, no markdown.` + indiaDocEngRule
     prompt := fmt.Sprintf(`Extract all deadlines, due dates, time limits, and time-bound obligations from this legal document.
 Respond ONLY with this exact JSON:
 {"deadlines":[{"title":"<short name>","date":"<specific date or period like '30 days from signing'>","days_left":"<calculated days or 'See document'>","party":"<who is responsible>","obligation":"<what must be done>","priority":"high/medium/low"}]}
@@ -950,7 +955,7 @@ Document:
 }
 
 func (c *Client) ScanRisks(ctx context.Context, text string) (*RiskScanResponse, error) {
-    system := `You are a senior Indian contract lawyer. Identify risky clauses in legal documents. Always respond with valid JSON only, no markdown, no explanation.`
+    system := `You are a senior Indian contract lawyer. Identify risky clauses in legal documents. Always respond with valid JSON only, no markdown, no explanation.` + indiaDocEngRule
     prompt := fmt.Sprintf(`Analyze this legal document for risky or unfavorable clauses under Indian law.
 Respond ONLY with this exact JSON:
 {"overall_risk":"high/medium/low","clauses":[{"title":"<clause name>","risk_level":"high/medium/low","clause_text":"<verbatim or paraphrased clause>","concern":"<why it is risky>","recommendation":"<what to do>"}]}
@@ -998,7 +1003,7 @@ type CompareResponse struct {
 }
 
 func (c *Client) CompareDocuments(ctx context.Context, text1, text2 string) (*CompareResponse, error) {
-	system := `You are a senior Indian legal document analyst. Compare two legal documents and identify all meaningful differences. Always respond with valid JSON only, no markdown.`
+	system := `You are a senior Indian legal document analyst. Compare two legal documents and identify all meaningful differences. Always respond with valid JSON only, no markdown.` + indiaDocEngRule
 	prompt := fmt.Sprintf(`Compare these two legal documents and identify all meaningful differences.
 Respond ONLY with this exact JSON:
 {"summary":"<2-3 sentence overview of the main differences>","total_changes":<number>,"differences":[{"category":"<clause/section name>","doc_a":"<what Document A says, or 'Not present'>","doc_b":"<what Document B says, or 'Not present'>","change":"added|removed|modified"}],"verdict":"<1-2 sentences: which version is more favorable and why, or what the key implication of the changes is>"}
@@ -1195,7 +1200,7 @@ func parseComplaintReply(raw string) *ComplaintReplyResponse {
 }
 
 func (c *Client) ExtractCitations(ctx context.Context, text string) (*CitationsResponse, error) {
-    system := `You are a legal document analysis expert specializing in Indian law. Extract all legal citations. Always respond with valid JSON only, no markdown, no explanation.`
+    system := `You are a legal document analysis expert specializing in Indian law. Extract all legal citations. Always respond with valid JSON only, no markdown, no explanation.` + indiaDocEngRule
     prompt := fmt.Sprintf(`Extract all legal citations and references from this Indian legal document.
 Respond ONLY with this exact JSON (empty arrays [] if none found for a category, no duplicates):
 {"cases":["<case name and citation>"],"sections":["<Section X of Act>"],"acts":["<Full Act name>"],"articles":["<Article X>"],"rules":["<Rule/Order reference>"]}

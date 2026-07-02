@@ -197,7 +197,12 @@ func (s *aiService) ProcessDocument(ctx context.Context, userID, docID uuid.UUID
 			return nil, fmt.Errorf("document file is no longer available on the server (the server was redeployed and the upload was lost — please re-upload the document)")
 		}
 
-		ocrResult, err := s.ocrService.ExtractText(ctx, doc.FilePath)
+		// Use multilingual OCR — all documents in this app may be in Indian
+		// regional languages (Marathi, Hindi, etc.) so always load eng+mar+hin.
+		// For digital PDFs this lang param is ignored (pdftotext handles Unicode).
+		// For scanned PDFs it controls which Tesseract language models are loaded.
+		ocrLang := indiaOCRLang(doc.Language)
+		ocrResult, err := s.ocrService.ExtractTextWithLang(ctx, doc.FilePath, ocrLang)
 		if err != nil {
 			_ = s.docRepo.UpdateStatus(ctx, docID, docModel.DocumentStatusFailed)
 			_ = s.docRepo.UpdateOCRStatus(ctx, docID, "failed")
@@ -790,5 +795,29 @@ func (s *aiService) DraftDocument(ctx context.Context, userID uuid.UUID, docType
         Title:      draft.Title,
         Content:    draft.Content,
     }, nil
+}
+
+// indiaOCRLang returns the Tesseract language string for a document.
+// Since this app handles Indian legal documents, we always include Marathi
+// and Hindi alongside English so scanned PDFs in any of these scripts are
+// read correctly. For digital PDFs pdftotext handles Unicode natively and
+// this param is irrelevant.
+func indiaOCRLang(docLang string) string {
+	switch strings.ToLower(docLang) {
+	case "mr", "marathi":
+		return "eng+mar"
+	case "hi", "hindi":
+		return "eng+hin"
+	case "gu", "gujarati":
+		return "eng+guj"
+	case "ta", "tamil":
+		return "eng+tam"
+	case "te", "telugu":
+		return "eng+tel"
+	default:
+		// Default: include both Marathi and Hindi since most Indian legal
+		// documents in Maharashtra are in one of these three scripts.
+		return "eng+mar+hin"
+	}
 }
 

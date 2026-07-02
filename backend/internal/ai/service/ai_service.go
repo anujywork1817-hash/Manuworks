@@ -202,10 +202,8 @@ func (s *aiService) ProcessDocument(ctx context.Context, userID, docID uuid.UUID
 		// For digital PDFs this lang param is ignored (pdftotext handles Unicode).
 		// For scanned PDFs it controls which Tesseract language models are loaded.
 		ocrLang := indiaOCRLang(doc.Language)
-		// Use fast settings (150 DPI, LSTM-only, 20-page cap) so AI features
-		// respond within the 30-second HTTP timeout on the free-tier server.
-		// Digital PDFs bypass OCR entirely and are not affected by the cap.
-		ocrResult, err := s.ocrService.ExtractTextFast(ctx, doc.FilePath, ocrLang, 20)
+		// No page limit — ProcessDocument always runs in a background goroutine.
+		ocrResult, err := s.ocrService.ExtractTextWithLang(ctx, doc.FilePath, ocrLang)
 		if err != nil {
 			_ = s.docRepo.UpdateStatus(ctx, docID, docModel.DocumentStatusFailed)
 			_ = s.docRepo.UpdateOCRStatus(ctx, docID, "failed")
@@ -603,13 +601,14 @@ func (s *aiService) getDocument(ctx context.Context, userID, docID uuid.UUID) (*
 	if err != nil {
 		return nil, err
 	}
-	if doc.Status != docModel.DocumentStatusReady {
-		return nil, fmt.Errorf("document is not ready for AI processing (status: %s) — call /process first", doc.Status)
+	if doc.Status == docModel.DocumentStatusReady && doc.OcrText != "" {
+		return doc, nil
 	}
-	if doc.OcrText == "" {
-		return nil, fmt.Errorf("document has no extracted text — re-process the document")
+	// Auto-trigger background processing if not already running.
+	if doc.Status != docModel.DocumentStatusProcessing {
+		go func() { _, _ = s.ProcessDocument(context.Background(), userID, docID) }()
 	}
-	return doc, nil
+	return nil, fmt.Errorf("document is being processed — please try again in a moment")
 }
 
 // getDocumentText loads OCR text from PostgreSQL, truncated to maxChars.

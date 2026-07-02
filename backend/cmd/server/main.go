@@ -325,13 +325,16 @@ func main() {
 		})
 	}
 
+	// Allow large file uploads (up to 500 MB buffered to disk by Gin).
+	router.MaxMultipartMemory = 500 << 20
+
 	// ─── 17. Start server with graceful shutdown ──────────────────────────────────
 	srv := &http.Server{
-		Addr:         fmt.Sprintf(":%s", cfg.App.Port),
-		Handler:      router,
-		ReadTimeout:  30 * time.Second,
-		WriteTimeout: 120 * time.Second, // longer for AI requests
-		IdleTimeout:  60 * time.Second,
+		Addr:              fmt.Sprintf(":%s", cfg.App.Port),
+		Handler:           router,
+		ReadHeaderTimeout: 10 * time.Second,  // protect against slow-header attacks only
+		WriteTimeout:      300 * time.Second, // 5 min for AI responses
+		IdleTimeout:       120 * time.Second,
 	}
 
 	// Start in goroutine so we can listen for shutdown signal

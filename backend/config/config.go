@@ -240,7 +240,7 @@ func Load() *Config {
 		Storage: StorageConfig{
 			Type:         getStr("STORAGE_TYPE", "local"),
 			LocalPath:    getStr("STORAGE_LOCAL_PATH", "./storage"),
-			MaxFileSize:  int64(getInt("STORAGE_MAX_FILE_SIZE", 52428800)),
+			MaxFileSize:  int64(getInt("STORAGE_MAX_FILE_SIZE", 524288000)),
 			AllowedTypes: getStringSlice("STORAGE_ALLOWED_TYPES", []string{"pdf", "docx", "doc", "txt", "png", "jpg", "jpeg"}),
 		},
 

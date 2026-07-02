@@ -7,6 +7,8 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"sync"
+	"time"
 
 	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
@@ -16,6 +18,67 @@ import (
 	"github.com/yourusername/docassist/pkg/middleware"
 	"github.com/yourusername/docassist/pkg/ocr"
 )
+
+// ── Async complaint-reply job store ──────────────────────────────────────────
+// Render.com free tier kills HTTP requests after ~30 s. OCR on a scanned
+// multi-page PDF takes 2-5 minutes. Solution: return a job_id immediately,
+// process in a background goroutine, Flutter polls for the result.
+
+type complaintJobStatus string
+
+const (
+	jobProcessing complaintJobStatus = "processing"
+	jobDone       complaintJobStatus = "completed"
+	jobFailed     complaintJobStatus = "failed"
+)
+
+type complaintJob struct {
+	Status    complaintJobStatus
+	Result    *service.ComplaintReplyResult
+	ErrMsg    string
+	CreatedAt time.Time
+}
+
+var (
+	jobsMu sync.RWMutex
+	jobs   = map[string]*complaintJob{}
+)
+
+func storeJob(id string, j *complaintJob) {
+	jobsMu.Lock()
+	jobs[id] = j
+	jobsMu.Unlock()
+}
+
+func readJob(id string) (*complaintJob, bool) {
+	jobsMu.RLock()
+	defer jobsMu.RUnlock()
+	j, ok := jobs[id]
+	return j, ok
+}
+
+func deleteJob(id string) {
+	jobsMu.Lock()
+	delete(jobs, id)
+	jobsMu.Unlock()
+}
+
+func init() {
+	// Purge stale jobs older than 30 minutes every 10 minutes.
+	go func() {
+		for {
+			time.Sleep(10 * time.Minute)
+			jobsMu.Lock()
+			cutoff := time.Now().Add(-30 * time.Minute)
+			for id, j := range jobs {
+				if j.CreatedAt.Before(cutoff) {
+					delete(jobs, id)
+				}
+			}
+			jobsMu.Unlock()
+		}
+	}()
+}
 
 type AIHandler struct {
 	aiService  service.AIService
@@ -388,8 +451,12 @@ func (h *AIHandler) HelpChat(c *gin.Context) {
 	respond(c, http.StatusOK, true, "ok", gin.H{"reply": reply})
 }
 
-// ComplaintReplyGenerator accepts a complaint PDF and an existing reply DOCX template
-// via multipart form, extracts text from both, and returns an AI-generated reply.
+// ComplaintReplyGenerator starts an async complaint-reply job and returns a job_id.
+//
+// Why async: Render.com free tier kills HTTP requests after ~30 s, but OCR on
+// a scanned multi-page PDF takes 2-5 min. The HTTP handler saves the uploaded
+// files, launches a goroutine, and responds with {job_id} immediately.
+// Flutter then polls GET /ai/complaint-reply/status/:job_id every 3 s.
 func (h *AIHandler) ComplaintReplyGenerator(c *gin.Context) {
 	userID, err := uuid.Parse(middleware.GetUserID(c))
 	if err != nil {
@@ -423,9 +490,9 @@ func (h *AIHandler) ComplaintReplyGenerator(c *gin.Context) {
 		respond(c, http.StatusInternalServerError, false, "failed to create temp file", nil)
 		return
 	}
-	defer os.Remove(complaintTmp.Name())
 	if _, err := io.Copy(complaintTmp, complaintFile); err != nil {
 		complaintTmp.Close()
+		os.Remove(complaintTmp.Name())
 		respond(c, http.StatusInternalServerError, false, "failed to save complaint file", nil)
 		return
 	}
@@ -438,57 +505,110 @@ func (h *AIHandler) ComplaintReplyGenerator(c *gin.Context) {
 	}
 	replyTmp, err := os.CreateTemp("", "reply-*"+replyExt)
 	if err != nil {
+		os.Remove(complaintTmp.Name())
 		respond(c, http.StatusInternalServerError, false, "failed to create temp file", nil)
 		return
 	}
-	defer os.Remove(replyTmp.Name())
 	if _, err := io.Copy(replyTmp, replyFile); err != nil {
 		replyTmp.Close()
+		os.Remove(complaintTmp.Name())
+		os.Remove(replyTmp.Name())
 		respond(c, http.StatusInternalServerError, false, "failed to save reply file", nil)
 		return
 	}
 	replyTmp.Close()
 
-	// ── Extract text from complaint PDF ────────────────────────────────────────
-	// Use multilingual OCR so complaints written in Marathi, Hindi, or English are all read.
-	// pdftotext (used first internally) already handles Unicode so this mostly affects scanned PDFs.
-	complaintResult, err := h.ocrService.ExtractTextWithLang(c.Request.Context(), complaintTmp.Name(), "eng+mar+hin")
-	if err != nil || complaintResult.Text == "" {
-		msg := "Failed to extract text from complaint PDF — ensure it is a readable PDF"
-		if err != nil {
-			msg = fmt.Sprintf("Complaint extraction failed: %v", err)
+	// ── Create job record and start goroutine ──────────────────────────────────
+	jobID := uuid.New().String()
+	job := &complaintJob{Status: jobProcessing, CreatedAt: time.Now()}
+	storeJob(jobID, job)
+
+	complaintPath := complaintTmp.Name()
+	replyPath := replyTmp.Name()
+
+	go func() {
+		defer os.Remove(complaintPath)
+		defer os.Remove(replyPath)
+
+		// Use a fresh background context — the HTTP request context is already
+		// cancelled by the time this goroutine does meaningful work.
+		ctx := context.Background()
+
+		complaintResult, err := h.ocrService.ExtractTextWithLang(ctx, complaintPath, "eng+mar+hin")
+		if err != nil || complaintResult.Text == "" {
+			msg := "Failed to extract text from complaint PDF"
+			if err != nil {
+				msg = fmt.Sprintf("Complaint extraction failed: %v", err)
+			}
+			jobsMu.Lock()
+			job.Status = jobFailed
+			job.ErrMsg = msg
+			jobsMu.Unlock()
+			return
 		}
-		respond(c, http.StatusBadRequest, false, msg, nil)
-		return
-	}
 
-	// ── Extract text from reply DOCX ───────────────────────────────────────────
-	replyResult, err := h.ocrService.ExtractText(c.Request.Context(), replyTmp.Name())
-	if err != nil || replyResult.Text == "" {
-		msg := "Failed to extract text from reply DOCX — ensure it is a valid Word document"
-		if err != nil {
-			msg = fmt.Sprintf("Reply extraction failed: %v", err)
+		replyResult, err := h.ocrService.ExtractText(ctx, replyPath)
+		if err != nil || replyResult.Text == "" {
+			msg := "Failed to extract text from reply DOCX"
+			if err != nil {
+				msg = fmt.Sprintf("Reply extraction failed: %v", err)
+			}
+			jobsMu.Lock()
+			job.Status = jobFailed
+			job.ErrMsg = msg
+			jobsMu.Unlock()
+			return
 		}
-		respond(c, http.StatusBadRequest, false, msg, nil)
+
+		logger.Info("Complaint reply generation started (async)",
+			logger.Str("job_id", jobID),
+			logger.Str("user_id", userID.String()),
+			logger.Int("complaint_chars", len(complaintResult.Text)),
+		)
+
+		result, err := h.aiService.GenerateComplaintReply(ctx, userID, complaintResult.Text, replyResult.Text)
+		jobsMu.Lock()
+		if err != nil {
+			job.Status = jobFailed
+			job.ErrMsg = err.Error()
+		} else {
+			job.Status = jobDone
+			job.Result = result
+		}
+		jobsMu.Unlock()
+		logger.Info("Complaint reply job finished", logger.Str("job_id", jobID), logger.Str("status", string(job.Status)))
+	}()
+
+	respond(c, http.StatusOK, true, "processing", gin.H{"job_id": jobID})
+}
+
+// GetComplaintReplyStatus returns the status of an async complaint-reply job.
+// Flutter polls this every 3 seconds after calling ComplaintReplyGenerator.
+// On completion the result is included in the response and the job is removed.
+func (h *AIHandler) GetComplaintReplyStatus(c *gin.Context) {
+	jobID := c.Param("job_id")
+	job, ok := readJob(jobID)
+	if !ok {
+		respond(c, http.StatusNotFound, false, "job not found or expired", nil)
 		return
 	}
 
-	logger.Info("Complaint reply generation started",
-		logger.Str("user_id", userID.String()),
-		logger.Int("complaint_chars", len(complaintResult.Text)),
-		logger.Int("reply_template_chars", len(replyResult.Text)),
-	)
+	jobsMu.RLock()
+	status := job.Status
+	result := job.Result
+	errMsg := job.ErrMsg
+	jobsMu.RUnlock()
 
-	// ── Generate new reply via AI ──────────────────────────────────────────────
-	result, err := h.aiService.GenerateComplaintReply(
-		c.Request.Context(), userID, complaintResult.Text, replyResult.Text,
-	)
-	if err != nil {
-		respond(c, http.StatusInternalServerError, false, err.Error(), nil)
-		return
+	switch status {
+	case jobDone:
+		deleteJob(jobID)
+		respond(c, http.StatusOK, true, "completed", result)
+	case jobFailed:
+		deleteJob(jobID)
+		respond(c, http.StatusOK, false, errMsg, nil)
+	default:
+		respond(c, http.StatusOK, true, "processing", gin.H{"status": "processing"})
 	}
-
-	respond(c, http.StatusOK, true, "Complaint reply generated", result)
 }
 
 // DownloadReplyDocx accepts the generated reply text and returns it as a .docx binary.

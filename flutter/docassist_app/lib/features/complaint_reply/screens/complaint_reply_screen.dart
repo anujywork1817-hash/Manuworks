@@ -65,6 +65,9 @@ class _ComplaintReplyScreenState extends ConsumerState<ComplaintReplyScreen> {
     }
   }
 
+  // Status message shown under the spinner while OCR / AI generation runs.
+  String _statusMsg = 'Uploading files…';
+
   Future<void> _generate() async {
     if (_complaintFile == null || _replyFile == null) return;
     if (_complaintFile!.path == null || _replyFile!.path == null) {
@@ -72,9 +75,15 @@ class _ComplaintReplyScreenState extends ConsumerState<ComplaintReplyScreen> {
       return;
     }
 
-    setState(() { _generating = true; _error = null; _replyText = null; });
+    setState(() {
+      _generating = true;
+      _error = null;
+      _replyText = null;
+      _statusMsg = 'Uploading files…';
+    });
 
     try {
+      // ── Step 1: Upload files and start the async job ────────────────────────
       final formData = FormData.fromMap({
         'complaint_pdf': await MultipartFile.fromFile(
           _complaintFile!.path!,
@@ -86,38 +95,69 @@ class _ComplaintReplyScreenState extends ConsumerState<ComplaintReplyScreen> {
         ),
       });
 
-      final response = await DioClient.instance.post(
+      final startResponse = await DioClient.instance.post(
         '/ai/complaint-reply',
         data: formData,
-        options: Options(
-          contentType: 'multipart/form-data',
-          receiveTimeout: const Duration(minutes: 3),
-        ),
+        options: Options(contentType: 'multipart/form-data'),
       );
 
-      final body = response.data as Map<String, dynamic>;
-      if (!(body['success'] as bool? ?? false)) {
-        throw Exception(body['message'] ?? 'Generation failed');
+      final startBody = startResponse.data as Map<String, dynamic>;
+      final jobId = (startBody['data'] as Map<String, dynamic>?)?['job_id'] as String?;
+      if (jobId == null) throw Exception('Server did not return a job_id');
+
+      if (mounted) setState(() => _statusMsg = 'Reading PDF… this may take a minute for scanned documents');
+
+      // ── Step 2: Poll until the job finishes ─────────────────────────────────
+      const maxWait = Duration(minutes: 8);
+      final deadline = DateTime.now().add(maxWait);
+
+      while (DateTime.now().isBefore(deadline)) {
+        await Future.delayed(const Duration(seconds: 4));
+        if (!mounted) return;
+
+        final statusResponse = await DioClient.instance.get(
+          '/ai/complaint-reply/status/$jobId',
+        );
+        final statusBody = statusResponse.data as Map<String, dynamic>;
+        final msg = statusBody['message'] as String? ?? '';
+
+        if (msg == 'completed') {
+          final data = statusBody['data'] as Map<String, dynamic>;
+          final replyText = (data['reply_text'] as String?) ?? '';
+          final sections = (data['modified_sections'] as List<dynamic>?)
+                  ?.map((e) => e.toString())
+                  .where((s) => s.isNotEmpty)
+                  .toList() ??
+              [];
+          final summary = (data['summary'] as String?) ?? '';
+
+          if (mounted) {
+            setState(() {
+              _replyText = replyText;
+              _modifiedSections = sections;
+              _summary = summary;
+              _editCtrl.text = replyText;
+              _generating = false;
+            });
+          }
+          return;
+        }
+
+        if (!(statusBody['success'] as bool? ?? true)) {
+          throw Exception(msg.isNotEmpty ? msg : 'Generation failed');
+        }
+
+        // Still processing — update the status message periodically.
+        if (mounted) {
+          setState(() {
+            _statusMsg = msg == 'processing'
+                ? 'Generating reply… please wait'
+                : 'Processing…';
+          });
+        }
       }
 
-      final data = body['data'] as Map<String, dynamic>;
-      final replyText = (data['reply_text'] as String?) ?? '';
-      final sections = (data['modified_sections'] as List<dynamic>?)
-              ?.map((e) => e.toString())
-              .where((s) => s.isNotEmpty)
-              .toList() ??
-          [];
-      final summary = (data['summary'] as String?) ?? '';
-
-      if (mounted) {
-        setState(() {
-          _replyText = replyText;
-          _modifiedSections = sections;
-          _summary = summary;
-          _editCtrl.text = replyText;
-          _generating = false;
-        });
-      }
+      throw Exception('Timed out waiting for reply generation. Please try again.');
     } catch (e) {
       if (mounted) {
         setState(() {
@@ -342,7 +382,7 @@ class _ComplaintReplyScreenState extends ConsumerState<ComplaintReplyScreen> {
                           strokeWidth: 2, color: AppColors.surface))
                   : const Icon(Icons.auto_awesome_rounded),
               label: Text(
-                  _generating ? 'Generating reply...' : 'Generate Complaint Reply'),
+                  _generating ? _statusMsg : 'Generate Complaint Reply'),
               style: ElevatedButton.styleFrom(
                 padding: const EdgeInsets.symmetric(vertical: 14),
                 textStyle: const TextStyle(

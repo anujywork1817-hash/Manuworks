@@ -382,8 +382,14 @@ func (s *Service) ExtractTextWithLang(ctx context.Context, filePath, lang string
 	case "pdf":
 		// First try to extract digital text from PDF (faster, more accurate).
 		// pdftotext returns Unicode so it works for any language without Tesseract.
-		if text, err := extractDigitalPDFText(filePath); err == nil && len(text) > 100 {
+		// Threshold is low (30 chars) — even a short text layer is enough to skip
+		// the multi-second Tesseract OCR pipeline.
+		if text, err := extractDigitalPDFText(filePath); err == nil && len(strings.TrimSpace(text)) > 30 {
 			wc := countWords(text)
+			logger.Info("Digital PDF text extracted (no OCR needed)",
+				logger.Int("chars", len(text)),
+				logger.Int("words", wc),
+			)
 			return &ExtractResult{
 				Text:       cleanText(text),
 				PageCount:  estimatePageCount(text),
@@ -392,7 +398,8 @@ func (s *Service) ExtractTextWithLang(ctx context.Context, filePath, lang string
 				Confidence: 100.0,
 			}, nil
 		}
-		// Fall back to OCR for scanned PDFs
+		// Fall back to OCR only for truly scanned (image-only) PDFs.
+		logger.Info("PDF has no text layer — falling back to Tesseract OCR", logger.Str("lang", lang))
 		return s.extractFromPDFWithLang(ctx, filePath, lang)
 	default:
 		return s.ExtractFromFile(ctx, filePath)
@@ -401,13 +408,22 @@ func (s *Service) ExtractTextWithLang(ctx context.Context, filePath, lang string
 
 // extractDigitalPDFText tries to extract selectable text from a PDF (not scanned).
 // Uses pdftotext from poppler-utils.
+// IMPORTANT: try WITHOUT -layout first — the -layout flag preserves visual spacing
+// but corrupts complex scripts like Devanagari (Marathi/Hindi), returning near-empty
+// output and causing a needless fall-through to slow Tesseract OCR.
 func extractDigitalPDFText(filePath string) (string, error) {
-	cmd := exec.Command("pdftotext", "-layout", filePath, "-")
-	output, err := cmd.Output()
+	// Pass 1: plain extraction — correct for all scripts including Devanagari.
+	if out, err := exec.Command("pdftotext", filePath, "-").Output(); err == nil {
+		if text := strings.TrimSpace(string(out)); len(text) > 30 {
+			return text, nil
+		}
+	}
+	// Pass 2: layout mode — better for columnar/tabular Latin-script PDFs.
+	out, err := exec.Command("pdftotext", "-layout", filePath, "-").Output()
 	if err != nil {
 		return "", err
 	}
-	return string(output), nil
+	return string(out), nil
 }
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────

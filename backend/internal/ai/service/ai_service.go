@@ -3,6 +3,7 @@ package service
 import (
 	"context"
 	"fmt"
+	"os"
 	"strings"
 	"time"
 
@@ -152,7 +153,10 @@ func (s *aiService) ProcessDocument(ctx context.Context, userID, docID uuid.UUID
 		logger.Str("file_type", string(doc.FileType)),
 	)
 
-	// 2. Extract text — skip OCR if the user manually edited the text
+	// 2. Extract text — priority order:
+	//    a) user-edited text  (never overwrite)
+	//    b) previously extracted text cached in DB  (avoids hitting disk on Render redeploys)
+	//    c) extract fresh from file
 	var (
 		extractedText string
 		ocrWordCount  int
@@ -160,8 +164,9 @@ func (s *aiService) ProcessDocument(ctx context.Context, userID, docID uuid.UUID
 		ocrUsed       bool
 	)
 
-	if doc.OcrStatus == "edited" && doc.OcrText != "" {
-		// Use the user-edited text as-is; don't overwrite it with fresh OCR
+	switch {
+	case doc.OcrStatus == "edited" && doc.OcrText != "":
+		// User manually corrected the text — preserve it exactly.
 		extractedText = doc.OcrText
 		ocrWordCount = doc.WordCount
 		ocrPageCount = doc.PageCount
@@ -170,7 +175,28 @@ func (s *aiService) ProcessDocument(ctx context.Context, userID, docID uuid.UUID
 			logger.Str("doc_id", docID.String()),
 			logger.Int("chars", len(extractedText)),
 		)
-	} else {
+
+	case doc.OcrStatus == "completed" && doc.OcrText != "":
+		// Text already extracted and stored in PostgreSQL — reuse it.
+		// This is the normal path after a server redeploy when the ephemeral
+		// /app/storage volume is gone but the DB text is still available.
+		extractedText = doc.OcrText
+		ocrWordCount = doc.WordCount
+		ocrPageCount = doc.PageCount
+		ocrUsed = false
+		logger.Info("Reusing cached OCR text from DB (skipping file extraction)",
+			logger.Str("doc_id", docID.String()),
+			logger.Int("chars", len(extractedText)),
+		)
+
+	default:
+		// First-time processing — file must exist on disk.
+		if _, statErr := os.Stat(doc.FilePath); os.IsNotExist(statErr) {
+			_ = s.docRepo.UpdateStatus(ctx, docID, docModel.DocumentStatusFailed)
+			_ = s.docRepo.UpdateOCRStatus(ctx, docID, "failed")
+			return nil, fmt.Errorf("document file is no longer available on the server (the server was redeployed and the upload was lost — please re-upload the document)")
+		}
+
 		ocrResult, err := s.ocrService.ExtractText(ctx, doc.FilePath)
 		if err != nil {
 			_ = s.docRepo.UpdateStatus(ctx, docID, docModel.DocumentStatusFailed)
@@ -182,7 +208,7 @@ func (s *aiService) ProcessDocument(ctx context.Context, userID, docID uuid.UUID
 		ocrPageCount = ocrResult.PageCount
 		ocrUsed = ocrResult.Confidence < 100.0
 
-		// 3. Save OCR text to PostgreSQL
+		// 3. Save OCR text to PostgreSQL so future calls can skip the file.
 		if err := s.docRepo.UpdateOCRText(ctx, docID, ocrResult.Text, ocrResult.WordCount); err != nil {
 			logger.Warn("Failed to save OCR text", logger.Str("error", err.Error()))
 		}

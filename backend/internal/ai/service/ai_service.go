@@ -202,7 +202,10 @@ func (s *aiService) ProcessDocument(ctx context.Context, userID, docID uuid.UUID
 		// For digital PDFs this lang param is ignored (pdftotext handles Unicode).
 		// For scanned PDFs it controls which Tesseract language models are loaded.
 		ocrLang := indiaOCRLang(doc.Language)
-		ocrResult, err := s.ocrService.ExtractTextWithLang(ctx, doc.FilePath, ocrLang)
+		// Use fast settings (150 DPI, LSTM-only, 20-page cap) so AI features
+		// respond within the 30-second HTTP timeout on the free-tier server.
+		// Digital PDFs bypass OCR entirely and are not affected by the cap.
+		ocrResult, err := s.ocrService.ExtractTextFast(ctx, doc.FilePath, ocrLang, 20)
 		if err != nil {
 			_ = s.docRepo.UpdateStatus(ctx, docID, docModel.DocumentStatusFailed)
 			_ = s.docRepo.UpdateOCRStatus(ctx, docID, "failed")
@@ -802,23 +805,8 @@ func (s *aiService) DraftDocument(ctx context.Context, userID uuid.UUID, docType
 // and Hindi alongside English so scanned PDFs in any of these scripts are
 // read correctly. For digital PDFs pdftotext handles Unicode natively and
 // this param is irrelevant.
+// indiaOCRLang delegates to the OCR package's canonical language mapping.
 func indiaOCRLang(docLang string) string {
-	switch strings.ToLower(docLang) {
-	case "mr", "marathi":
-		// eng+mar: standard Devanagari Marathi
-		// mod: Modi script (historical Marathi cursive used in old government records)
-		// san: Sanskrit Devanagari — shares glyph forms, helps with stylised Marathi fonts
-		return "eng+mar+mod+san"
-	case "hi", "hindi":
-		return "eng+hin"
-	case "gu", "gujarati":
-		return "eng+guj"
-	case "ta", "tamil":
-		return "eng+tam"
-	case "te", "telugu":
-		return "eng+tel"
-	default:
-		return "eng+mar+hin+mod"
-	}
+	return ocr.LangToTess(docLang)
 }
 

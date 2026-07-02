@@ -534,7 +534,7 @@ func (h *AIHandler) ComplaintReplyGenerator(c *gin.Context) {
 		// cancelled by the time this goroutine does meaningful work.
 		ctx := context.Background()
 
-		complaintResult, err := h.ocrService.ExtractTextWithLang(ctx, complaintPath, "eng+mar+hin")
+		complaintResult, err := h.ocrService.ExtractTextFast(ctx, complaintPath, "eng+mar+hin+mod", 50)
 		if err != nil || complaintResult.Text == "" {
 			msg := "Failed to extract text from complaint PDF"
 			if err != nil {
@@ -710,8 +710,11 @@ func (h *AIHandler) ScanOCR(c *gin.Context) {
 	if lang == "" {
 		lang = "en"
 	}
+	tessLang := ocr.LangToTess(lang)
 
-	result, err := h.ocrService.ExtractText(c.Request.Context(), tmp.Name())
+	// Cap at 15 pages for synchronous HTTP response on the free-tier server.
+	// Single images and short PDFs are unaffected; large scanned books are capped.
+	result, err := h.ocrService.ExtractTextFast(c.Request.Context(), tmp.Name(), tessLang, 15)
 	if err != nil {
 		respond(c, http.StatusInternalServerError, false, fmt.Sprintf("OCR failed: %v", err), nil)
 		return

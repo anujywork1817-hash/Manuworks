@@ -162,8 +162,8 @@ class _ComplaintReplyScreenState extends ConsumerState<ComplaintReplyScreen> {
       if (mounted) {
         setState(() {
           final msg = e.toString();
-          _error = msg.contains('Daily AI')
-              ? 'Daily AI limit reached. Please try again later.'
+          _error = msg.contains('Daily AI') || msg.contains('daily quota') || msg.contains('temporarily unavailable')
+              ? 'AI service is temporarily busy. Please try again in a few hours.'
               : msg.contains('Exception:')
                   ? msg.replaceFirst('Exception: ', '')
                   : 'Generation failed: $msg';

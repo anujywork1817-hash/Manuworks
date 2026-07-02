@@ -163,6 +163,7 @@ func main() {
 	documentSvc := docService.NewDocumentService(documentRepository, cfg)
 	groqClient := groq.NewClient(&groq.Config{
 		APIKey:       cfg.Groq.APIKey,
+		APIKeys:      cfg.Groq.APIKeys, // GROQ_API_KEY_2 … _5 for key rotation
 		Model:        cfg.Groq.Model,
 		OpenAIAPIKey: cfg.OpenAI.APIKey,
 		OpenAIModel:  cfg.OpenAI.Model,

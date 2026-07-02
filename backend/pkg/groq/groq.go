@@ -25,29 +25,40 @@ const (
 	defaultTimeout     = 60 * time.Second
 )
 
+// groqKeySlot tracks one Groq API key and its daily-limit cooldown.
+type groqKeySlot struct {
+	key           string
+	cooldownUntil time.Time
+}
+
 // Client talks to OpenAI (primary) and Groq (secondary/fallback). Every
 // public method tries OpenAI first; if OpenAI is unset, rate-limited, or
 // out of quota, it transparently falls back to Groq until OpenAI's limit
 // is expected to have reset.
+//
+// Multiple Groq keys are supported. When one key exhausts its daily token
+// quota it is marked cooling-down and the next key is used automatically —
+// so one key hitting its daily limit does NOT block every user in the app.
 type Client struct {
-	apiKey     string // Groq API key (fallback provider)
-	model      string // Groq model
+	groqKeys   []groqKeySlot // All Groq API keys; first is primary
+	model      string
 	httpClient *http.Client
 
-	openAIAPIKey string // OpenAI API key (primary provider)
+	openAIAPIKey string
 	openAIModel  string
 
 	mu                  sync.Mutex
-	openAICooldownUntil time.Time // skip OpenAI until this time once it's rate-limited
+	openAICooldownUntil time.Time
 }
 
 // Config holds Groq + OpenAI configuration
 type Config struct {
-	APIKey  string // Groq API key (fallback)
-	Model   string // Groq model
+	APIKey  string   // Primary Groq API key
+	APIKeys []string // Additional Groq keys for rotation (GROQ_API_KEY_2 … _5)
+	Model   string
 	Timeout time.Duration
 
-	OpenAIAPIKey string // OpenAI API key (primary)
+	OpenAIAPIKey string
 	OpenAIModel  string
 }
 
@@ -157,6 +168,16 @@ func NewClient(cfg *Config) *Client {
 	if timeout == 0 {
 		timeout = defaultTimeout
 	}
+	// Build key pool: primary key first, then extras. Skip blank entries.
+	var slots []groqKeySlot
+	if cfg.APIKey != "" {
+		slots = append(slots, groqKeySlot{key: cfg.APIKey})
+	}
+	for _, k := range cfg.APIKeys {
+		if k != "" {
+			slots = append(slots, groqKeySlot{key: k})
+		}
+	}
 	// Force IPv4 to avoid IPv6 connectivity issues on networks where
 	// IPv6 routing to Groq's CDN (Cloudflare) is broken.
 	transport := &http.Transport{
@@ -165,11 +186,34 @@ func NewClient(cfg *Config) *Client {
 		},
 	}
 	return &Client{
-		apiKey:       cfg.APIKey,
+		groqKeys:     slots,
 		model:        model,
 		openAIAPIKey: cfg.OpenAIAPIKey,
 		openAIModel:  openAIModel,
 		httpClient:   &http.Client{Timeout: timeout, Transport: transport},
+	}
+}
+
+// activeGroqKey returns the first Groq key that is not in a daily-limit
+// cooldown, and its index. Returns "", -1 if all keys are exhausted.
+func (c *Client) activeGroqKey() (string, int) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	now := time.Now()
+	for i, slot := range c.groqKeys {
+		if now.After(slot.cooldownUntil) {
+			return slot.key, i
+		}
+	}
+	return "", -1
+}
+
+// cooldownGroqKey marks key at index i as exhausted until `until`.
+func (c *Client) cooldownGroqKey(i int, until time.Time) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if i >= 0 && i < len(c.groqKeys) {
+		c.groqKeys[i].cooldownUntil = until
 	}
 }
 
@@ -250,31 +294,48 @@ func (c *Client) generate(ctx context.Context, systemPrompt, userPrompt string, 
 	return c.generateGroq(ctx, msgs, maxTokens)
 }
 
-// generateGroq calls Groq with the retry/backoff behavior Groq needs for
-// its own rate limits. Used directly when OpenAI isn't configured, and as
-// the fallback path when OpenAI fails.
+// generateGroq calls Groq with retry/backoff and automatic key rotation.
+// When a key hits its daily token quota it is marked cooling-down and the
+// next available key is tried — so a single exhausted key does NOT surface
+// "Daily AI limit" to every user in the app.
 func (c *Client) generateGroq(ctx context.Context, msgs []message, maxTokens int) (string, error) {
 	const maxRetries = 2
+
 	for attempt := 0; attempt <= maxRetries; attempt++ {
-		result, retryAfter, err := c.doRequest(ctx, baseURL, c.apiKey, c.model, msgs, maxTokens, 0.3)
+		key, idx := c.activeGroqKey()
+		if key == "" {
+			return "", fmt.Errorf("AI service is temporarily unavailable (all API keys have reached their daily quota). Please try again in a few hours.")
+		}
+
+		result, retryAfter, err := c.doRequest(ctx, baseURL, key, c.model, msgs, maxTokens, 0.3)
 		if err == nil {
 			return result, nil
 		}
-		if retryAfter > 0 && attempt < maxRetries {
-			// Daily token limit — don't wait, surface a clear message
+
+		if retryAfter > 0 {
 			if retryAfter > 2*time.Minute {
-				return "", fmt.Errorf("Daily AI token limit reached. Please try again in %s.", formatWait(retryAfter))
-			}
-			select {
-			case <-ctx.Done():
-				return "", ctx.Err()
-			case <-time.After(retryAfter):
+				// Daily token quota on this key — cool it down and try the next key.
+				c.cooldownGroqKey(idx, time.Now().Add(retryAfter))
+				logger.Warn("Groq key daily limit hit, rotating to next key",
+					logger.Int("key_index", idx),
+					logger.Str("retry_in", formatWait(retryAfter)),
+				)
+				// Don't increment attempt — immediately retry with the next key.
 				continue
+			}
+			if attempt < maxRetries {
+				// Short rate-limit (per-minute): wait and retry same key.
+				select {
+				case <-ctx.Done():
+					return "", ctx.Err()
+				case <-time.After(retryAfter):
+					continue
+				}
 			}
 		}
 		return "", err
 	}
-	return "", fmt.Errorf("max retries exceeded")
+	return "", fmt.Errorf("AI service is busy, please try again in a moment.")
 }
 
 // doRequest performs a single chat-completion call against the given
@@ -356,7 +417,11 @@ func (c *Client) chatCompletion(ctx context.Context, msgs []message, maxTokens i
 			logger.Warn("OpenAI request failed, falling back to Groq for this request", logger.Err(err))
 		}
 	}
-	result, _, err := c.doRequest(ctx, baseURL, c.apiKey, c.model, msgs, maxTokens, temperature)
+	key, _ := c.activeGroqKey()
+	if key == "" && len(c.groqKeys) > 0 {
+		key = c.groqKeys[0].key // last resort: use first key even if cooled down
+	}
+	result, _, err := c.doRequest(ctx, baseURL, key, c.model, msgs, maxTokens, temperature)
 	return result, err
 }
 

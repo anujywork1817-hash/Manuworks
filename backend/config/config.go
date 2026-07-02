@@ -201,9 +201,19 @@ func Load() *Config {
 		},
 
 		Groq: GroqConfig{
-            APIKey: getStr("GROQ_API_KEY", ""),
-            Model:  getStr("GROQ_MODEL", "llama-3.3-70b-versatile"),
-        },
+			APIKey: getStr("GROQ_API_KEY", ""),
+			APIKeys: func() []string {
+				// Collect GROQ_API_KEY_2 … GROQ_API_KEY_5, skip blanks.
+				extra := []string{}
+				for i := 2; i <= 5; i++ {
+					if k := getStr(fmt.Sprintf("GROQ_API_KEY_%d", i), ""); k != "" {
+						extra = append(extra, k)
+					}
+				}
+				return extra
+			}(),
+			Model: getStr("GROQ_MODEL", "llama-3.3-70b-versatile"),
+		},
         OpenAI: OpenAIConfig{
             APIKey: getStr("OPENAI_API_KEY", ""),
             Model:  getStr("OPENAI_MODEL", "gpt-4o-mini"),
@@ -396,8 +406,9 @@ func trimSpace(s string) string {
 
 
 type GroqConfig struct {
-    APIKey string
-    Model  string
+    APIKey  string   // primary key (GROQ_API_KEY)
+    APIKeys []string // additional keys for rotation (GROQ_API_KEY_2 … _5)
+    Model   string
 }
 
 // OpenAIConfig holds the primary AI provider's settings. Groq (above) is

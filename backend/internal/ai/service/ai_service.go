@@ -749,8 +749,8 @@ type ComplaintReplyResult struct {
 func (s *aiService) GenerateComplaintReply(ctx context.Context, userID uuid.UUID, complaintText, existingReplyText string) (*ComplaintReplyResult, error) {
 	result, err := s.groqClient.GenerateComplaintReply(
 		ctx,
-		truncate(complaintText, 8000),
-		truncate(existingReplyText, 8000),
+		truncate(complaintText, 12000),
+		truncate(existingReplyText, 6000),
 	)
 	if err != nil {
 		return nil, err

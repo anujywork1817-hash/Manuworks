@@ -1064,7 +1064,19 @@ Output format — follow EXACTLY (do not change the markers):
 ]
 ---END_CHANGES---
 ---SUMMARY---
-[One short paragraph explaining what the new complaint is about and how the reply addresses it.]
+[Write a detailed summary of 4-6 paragraphs covering ALL of the following:
+
+Paragraph 1 — Case Overview: Full names of all parties, the forum/authority the complaint is filed before, the complaint/case number, date of complaint, and the subject matter in one or two sentences.
+
+Paragraph 2 — Background & Facts: The complainant's background and connection to the matter, the respondents' roles, the key dates, events, or transactions that led to the complaint.
+
+Paragraph 3 — Allegations: A comprehensive list of every allegation or grievance raised in the complaint — include specific amounts (money, weight, area, etc.), dates, and section numbers of laws cited.
+
+Paragraph 4 — Relief Sought: Exactly what the complainant is asking for (orders, compensation, suspension, injunction, criminal action, etc.).
+
+Paragraph 5 — How the Reply Addresses It: The key legal defences raised in the reply — preliminary objections, denials, counter-facts, and legal submissions paragraph by paragraph.
+
+Paragraph 6 — Status and Key Points: What changes were made from the template, any critical observations about strengths or weaknesses in the complaint, and any urgent actions the respondent should take.]
 ---END_SUMMARY---
 
 NEW COMPLAINT:
@@ -1075,7 +1087,7 @@ EXISTING REPLY (TEMPLATE — use this structure and language):
 
 Write the complete new reply now:`, complaintText, existingReplyText)
 
-	raw, err := c.generate(ctx, system, prompt, 4000)
+	raw, err := c.generate(ctx, system, prompt, 8000)
 	if err != nil {
 		return nil, fmt.Errorf("generate complaint reply: %w", err)
 	}

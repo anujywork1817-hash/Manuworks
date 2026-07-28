@@ -1,6 +1,7 @@
 import 'dart:io';
 import 'package:dio/dio.dart';
 import 'package:file_picker/file_picker.dart';
+import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
@@ -47,7 +48,9 @@ class _ComplaintReplyScreenState extends ConsumerState<ComplaintReplyScreen> {
     final result = await FilePicker.platform.pickFiles(
       type: FileType.custom,
       allowedExtensions: ['pdf'],
-      withData: false,
+      // Web has no file paths, so we must read the bytes to be able to upload.
+      // Mobile keeps path-based access to avoid loading large scans into memory.
+      withData: kIsWeb,
     );
     if (result != null && result.files.isNotEmpty) {
       setState(() { _complaintFile = result.files.first; _error = null; });
@@ -58,20 +61,31 @@ class _ComplaintReplyScreenState extends ConsumerState<ComplaintReplyScreen> {
     final result = await FilePicker.platform.pickFiles(
       type: FileType.custom,
       allowedExtensions: ['docx'],
-      withData: false,
+      withData: kIsWeb,
     );
     if (result != null && result.files.isNotEmpty) {
       setState(() { _replyFile = result.files.first; _error = null; });
     }
   }
 
+  /// Builds a Dio upload part from a picked file. Uses the in-memory bytes when
+  /// available (web) and falls back to the file path (mobile/desktop).
+  Future<MultipartFile> _toMultipart(PlatformFile f) async {
+    if (f.bytes != null) {
+      return MultipartFile.fromBytes(f.bytes!, filename: f.name);
+    }
+    return MultipartFile.fromFile(f.path!, filename: f.name);
+  }
+
+  bool _isUsable(PlatformFile f) => f.bytes != null || f.path != null;
+
   // Status message shown under the spinner while OCR / AI generation runs.
   String _statusMsg = 'Uploading files…';
 
   Future<void> _generate() async {
     if (_complaintFile == null || _replyFile == null) return;
-    if (_complaintFile!.path == null || _replyFile!.path == null) {
-      setState(() => _error = 'Cannot access file path. Please try again.');
+    if (!_isUsable(_complaintFile!) || !_isUsable(_replyFile!)) {
+      setState(() => _error = 'Cannot access the selected file. Please pick it again.');
       return;
     }
 
@@ -85,14 +99,8 @@ class _ComplaintReplyScreenState extends ConsumerState<ComplaintReplyScreen> {
     try {
       // ── Step 1: Upload files and start the async job ────────────────────────
       final formData = FormData.fromMap({
-        'complaint_pdf': await MultipartFile.fromFile(
-          _complaintFile!.path!,
-          filename: _complaintFile!.name,
-        ),
-        'reply_docx': await MultipartFile.fromFile(
-          _replyFile!.path!,
-          filename: _replyFile!.name,
-        ),
+        'complaint_pdf': await _toMultipart(_complaintFile!),
+        'reply_docx': await _toMultipart(_replyFile!),
       });
 
       final startResponse = await DioClient.instance.post(

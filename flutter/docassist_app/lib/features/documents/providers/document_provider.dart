@@ -148,7 +148,7 @@ class DocumentNotifier extends StateNotifier<DocumentsState> {
 
       final formData = FormData.fromMap({'file': multipartFile});
 
-      await DioClient.uploadFile(
+      final uploadResponse = await DioClient.uploadFile(
         '/documents',
         formData,
         onSendProgress: (sent, total) {
@@ -163,6 +163,14 @@ class DocumentNotifier extends StateNotifier<DocumentsState> {
         body: '${file.name} has been uploaded successfully.',
         type: 'upload',
       );
+      // Auto-start background processing immediately after upload.
+      try {
+        final docId =
+            (uploadResponse.data as Map?)?['data']?['id']?.toString() ?? '';
+        if (docId.isNotEmpty) {
+          await DioClient.post('/documents/$docId/process');
+        }
+      } catch (_) {}
       return true;
     } catch (e) {
       state = state.copyWith(isUploading: false, error: e.toString());
@@ -178,7 +186,7 @@ class DocumentNotifier extends StateNotifier<DocumentsState> {
         'file': await MultipartFile.fromFile(filePath, filename: fileName),
       });
 
-      await DioClient.uploadFile(
+      final uploadResponse = await DioClient.uploadFile(
         '/documents',
         formData,
         onSendProgress: (sent, total) {
@@ -193,6 +201,14 @@ class DocumentNotifier extends StateNotifier<DocumentsState> {
         body: '$fileName has been uploaded successfully.',
         type: 'upload',
       );
+      // Auto-start background processing immediately after upload.
+      try {
+        final docId =
+            (uploadResponse.data as Map?)?['data']?['id']?.toString() ?? '';
+        if (docId.isNotEmpty) {
+          await DioClient.post('/documents/$docId/process');
+        }
+      } catch (_) {}
       return true;
     } catch (e) {
       state = state.copyWith(isUploading: false, error: e.toString());

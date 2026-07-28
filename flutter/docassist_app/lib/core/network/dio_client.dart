@@ -11,8 +11,35 @@ import 'package:shared_preferences/shared_preferences.dart';
 
 class ApiConstants {
   ApiConstants._();
-  static const String baseUrl = 'https://lexdocs-api.onrender.com/api/v1';
 
+  /// Absolute URL used by native builds, which have no page origin to inherit.
+  //
+  // LOCAL TESTING: pointed at the dev machine's Wi-Fi LAN IP so a physical phone
+  // on the same network can reach the backend running on the PC (port 8080).
+  // Switch back to production by restoring the commented line below.
+  static const String _nativeBaseUrl = 'http://192.168.1.40:8080/api/v1';
+  // static const String _nativeBaseUrl = 'http://3.108.194.79:8080/api/v1'; // production
+
+  /// Build-time override, for pointing any target at a different backend:
+  ///   flutter build web --dart-define=API_BASE_URL=https://example.com/api/v1
+  static const String _overrideBaseUrl = String.fromEnvironment('API_BASE_URL');
+
+  /// On web the app is served by CloudFront, which routes `/api/*` to the
+  /// backend origin. Deriving the base URL from the page origin keeps API
+  /// calls same-origin, which matters for two reasons:
+  ///
+  ///  - The page is served over HTTPS, and a browser blocks an HTTPS page from
+  ///    calling a plain `http://` endpoint (mixed content). The hardcoded
+  ///    `_nativeBaseUrl` above is exactly such an endpoint, so using it on web
+  ///    would fail every request.
+  ///  - Same-origin requests are not subject to CORS at all.
+  ///
+  /// Native builds are unaffected and keep using the absolute URL.
+  static String get baseUrl {
+    if (_overrideBaseUrl.isNotEmpty) return _overrideBaseUrl;
+    if (kIsWeb) return '${Uri.base.origin}/api/v1';
+    return _nativeBaseUrl;
+  }
 
   static const connectTimeout = Duration(seconds: 30);
   static const receiveTimeout = Duration(seconds: 600);

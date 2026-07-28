@@ -20,6 +20,19 @@ class _CompareScreenState extends ConsumerState<CompareScreen> {
   Map<String, dynamic>? _result;
   String? _error;
 
+  @override
+  void initState() {
+    super.initState();
+    // The document list is loaded lazily by the Documents tab. If the user
+    // opens Compare directly (e.g. from the dashboard) that list is still
+    // empty, leaving both pickers with nothing to select — so load it here.
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (ref.read(documentProvider).documents.isEmpty) {
+        ref.read(documentProvider.notifier).loadDocuments();
+      }
+    });
+  }
+
   Future<void> _compare() async {
     if (_doc1 == null || _doc2 == null) return;
     if (_doc1!.id == _doc2!.id) {

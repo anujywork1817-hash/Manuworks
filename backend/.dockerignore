@@ -16,6 +16,14 @@ swagger/
 storage/
 logs/
 
+# Elastic Beanstalk metadata — read by the EB agent from the bundle,
+# never needed inside the image.
+.ebextensions/
+.platform/
+Dockerrun.aws.json
+.ebignore
+.elasticbeanstalk/
+
 # Git
 .git/
 .gitignore

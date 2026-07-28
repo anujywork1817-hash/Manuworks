@@ -5,6 +5,7 @@ import 'package:go_router/go_router.dart';
 import 'package:timeago/timeago.dart' as timeago;
 import '../../../core/theme/app_theme.dart';
 import '../providers/document_provider.dart';
+import '../providers/favourites_provider.dart';
 
 class DocumentsScreen extends ConsumerStatefulWidget {
   const DocumentsScreen({super.key});
@@ -45,12 +46,16 @@ class _DocumentsScreenState extends ConsumerState<DocumentsScreen> {
   @override
   Widget build(BuildContext context) {
     final state = ref.watch(documentProvider);
+    final favIds = ref.watch(favouritesProvider);
     final theme = Theme.of(context);
     return Scaffold(
-      
+
       appBar: AppBar(
         title: const Text('Documents'),
         actions: [
+          IconButton(icon: const Icon(Icons.star_outline_rounded),
+            tooltip: 'Favourites',
+            onPressed: () => context.push('/favourites')),
           IconButton(icon: const Icon(Icons.refresh_outlined),
             onPressed: () => ref.read(documentProvider.notifier).loadDocuments()),
         ],
@@ -108,6 +113,10 @@ class _DocumentsScreenState extends ConsumerState<DocumentsScreen> {
                         itemCount: state.documents.length,
                         itemBuilder: (context, i) => _DocumentCard(
                           document: state.documents[i],
+                          isFavourite: favIds.contains(state.documents[i].id),
+                          onToggleFav: () => ref
+                              .read(favouritesProvider.notifier)
+                              .toggle(state.documents[i].id),
                           onTap: () { debugPrint('NAV TO DOC ID: ${state.documents[i].id}'); context.push('/documents/${state.documents[i].id}'); },
                           onDelete: () => _confirmDelete(context, state.documents[i]),
                         ),
@@ -136,7 +145,9 @@ class _DocumentsScreenState extends ConsumerState<DocumentsScreen> {
 
 class _DocumentCard extends StatelessWidget {
   final Document document; final VoidCallback onTap; final VoidCallback onDelete;
-  const _DocumentCard({required this.document, required this.onTap, required this.onDelete});
+  final bool isFavourite; final VoidCallback onToggleFav;
+  const _DocumentCard({required this.document, required this.onTap, required this.onDelete,
+      required this.isFavourite, required this.onToggleFav});
 
   Color get _typeColor {
     switch (document.fileType.toLowerCase()) {
@@ -185,10 +196,27 @@ class _DocumentCard extends StatelessWidget {
                 ],
               ]),
             ])),
+            IconButton(
+              icon: Icon(
+                isFavourite ? Icons.star_rounded : Icons.star_outline_rounded,
+                color: isFavourite ? AppColors.warning : theme.colorScheme.outline,
+              ),
+              tooltip: isFavourite ? 'Remove from favourites' : 'Add to favourites',
+              onPressed: onToggleFav,
+            ),
             PopupMenuButton<String>(
               icon: const Icon(Icons.more_vert_outlined),
-              onSelected: (v) { if (v == 'delete') onDelete(); },
+              onSelected: (v) {
+                if (v == 'delete') onDelete();
+                if (v == 'fav') onToggleFav();
+              },
               itemBuilder: (_) => [
+                PopupMenuItem(value: 'fav', child: Row(children: [
+                  Icon(isFavourite ? Icons.star_outline_rounded : Icons.star_rounded,
+                      color: AppColors.warning, size: 18),
+                  const SizedBox(width: 8),
+                  Text(isFavourite ? 'Remove from favourites' : 'Add to favourites'),
+                ])),
                 const PopupMenuItem(value: 'delete', child: Row(children: [
                   Icon(Icons.delete_outline, color: AppColors.error, size: 18),
                   SizedBox(width: 8),

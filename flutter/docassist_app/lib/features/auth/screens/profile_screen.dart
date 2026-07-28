@@ -14,11 +14,15 @@ final profileDataProvider = FutureProvider<Map<String, dynamic>>((ref) async {
       DioClient.get('/auth/me'),
       DioClient.get('/documents', queryParams: {'limit': 1}),
     ]);
-    final user    = results[0]['data'] ?? {};
-    final docTotal = results[1]['data']['total'] ?? 0;
+    // Normalise to Map<String, dynamic>. Dio can hand back a plain
+    // _Map<dynamic, dynamic> for nested objects, which otherwise blows up the
+    // downstream `as Map<String, dynamic>` casts with a red-screen type error.
+    final rawUser = results[0]['data'];
+    final user = rawUser is Map ? Map<String, dynamic>.from(rawUser) : <String, dynamic>{};
+    final docTotal = (results[1]['data']?['total'] as num?)?.toInt() ?? 0;
     return {'user': user, 'doc_count': docTotal};
   } catch (_) {
-    return {'user': {}, 'doc_count': 0};
+    return {'user': <String, dynamic>{}, 'doc_count': 0};
   }
 });
 
@@ -37,18 +41,22 @@ class _ProfileScreenState extends ConsumerState<ProfileScreen> {
     final cs           = Theme.of(context).colorScheme;
     final tt           = Theme.of(context).textTheme;
 
-    final email = userAsync.maybeWhen(
-      data: (u) => u['email'] ?? '',
+    // The editable name lives on the server (/auth/me, via profileDataProvider);
+    // local token storage only caches email/role and has no first/last name. Read
+    // the name from the server copy so the header updates the moment an edit
+    // invalidates profileDataProvider. Fall back to the cached email while the
+    // profile request is still loading.
+    final profileUser = profileAsync.valueOrNull?['user'] as Map<String, dynamic>?;
+    final cachedEmail = userAsync.maybeWhen(
+      data: (u) => (u['email'] ?? '').toString(),
       orElse: () => '',
     );
-    final firstName = userAsync.maybeWhen(
-      data: (u) => (u['first_name'] ?? '').toString(),
-      orElse: () => '',
-    );
-    final lastName = userAsync.maybeWhen(
-      data: (u) => (u['last_name'] ?? '').toString(),
-      orElse: () => '',
-    );
+
+    final email = (profileUser?['email'] as String?)?.isNotEmpty == true
+        ? profileUser!['email'] as String
+        : cachedEmail;
+    final firstName = (profileUser?['first_name'] ?? '').toString();
+    final lastName = (profileUser?['last_name'] ?? '').toString();
     final displayName = [firstName, lastName].where((s) => s.isNotEmpty).join(' ');
     final initials = _initials(firstName, lastName, email);
 
@@ -182,22 +190,6 @@ class _ProfileScreenState extends ConsumerState<ProfileScreen> {
                     onTap: () => context.push(AppRoutes.notifications),
                   );
                 }),
-              ],
-            ),
-          ),
-
-          // ── Documents section ─────────────────────────────────────────────
-          SliverToBoxAdapter(
-            child: _Section(
-              title: 'DOCUMENTS',
-              cs: cs, tt: tt,
-              tiles: [
-                _Tile(icon: Icons.folder_outlined, label: 'My Documents',
-                    cs: cs, tt: tt, onTap: () => context.go(AppRoutes.documents)),
-                _Tile(icon: Icons.star_outline_rounded, label: 'Favourites',
-                    cs: cs, tt: tt, onTap: () => context.push(AppRoutes.favourites)),
-                _Tile(icon: Icons.upload_file_outlined, label: 'Upload Document',
-                    cs: cs, tt: tt, onTap: () => context.go(AppRoutes.documents)),
               ],
             ),
           ),

@@ -25,6 +25,10 @@ flutter/docassist_app/windows/flutter/ephemeral/
 # Docker
 docker/secrets/
 
+# Elastic Beanstalk
+dist/
+backend/.elasticbeanstalk/
+
 # IDE
 .vscode/
 .idea/

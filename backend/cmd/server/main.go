@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"path/filepath"
 	"syscall"
 	"time"
 
@@ -77,8 +78,13 @@ func main() {
 	logger.Info("Starting DocAssist API", zap.String("env", cfg.App.Env), zap.String("version", "1.0.0"))
 
 	// ─── 4. Connect PostgreSQL ───────────────────────────────────────────────────
-	fmt.Printf("DSN: %s\n", cfg.Postgres.DSN())
-    db, err := database.Connect(cfg)
+	// Never log the DSN itself — it embeds POSTGRES_PASSWORD.
+	logger.Info("Connecting to PostgreSQL",
+		zap.String("host", cfg.Postgres.Host),
+		zap.String("db", cfg.Postgres.DBName),
+		zap.String("sslmode", cfg.Postgres.SSLMode),
+	)
+	db, err := database.Connect(cfg)
 	if err != nil {
 		logger.Fatal("Failed to connect to PostgreSQL", logger.Err(err))
 	}
@@ -149,7 +155,7 @@ func main() {
 	if err := os.MkdirAll(cfg.Storage.LocalPath, 0755); err != nil {
 		logger.Fatal("Failed to create storage directory", logger.Err(err))
 	}
-	if err := os.MkdirAll(cfg.Log.FilePath[:len(cfg.Log.FilePath)-len("/app.log")], 0755); err != nil {
+	if err := os.MkdirAll(filepath.Dir(cfg.Log.FilePath), 0755); err != nil {
 		logger.Warn("Could not create log directory", logger.Err(err))
 	}
 

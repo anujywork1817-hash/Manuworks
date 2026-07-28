@@ -17,8 +17,8 @@ class ApiConstants {
   // LOCAL TESTING: pointed at the dev machine's Wi-Fi LAN IP so a physical phone
   // on the same network can reach the backend running on the PC (port 8080).
   // Switch back to production by restoring the commented line below.
-  static const String _nativeBaseUrl = 'http://192.168.1.40:8080/api/v1';
-  // static const String _nativeBaseUrl = 'http://3.108.194.79:8080/api/v1'; // production
+  //static const String _nativeBaseUrl = 'http://192.168.1.40:8080/api/v1';
+  static const String _nativeBaseUrl = 'http://3.108.194.79:8080/api/v1'; // production
 
   /// Build-time override, for pointing any target at a different backend:
   ///   flutter build web --dart-define=API_BASE_URL=https://example.com/api/v1

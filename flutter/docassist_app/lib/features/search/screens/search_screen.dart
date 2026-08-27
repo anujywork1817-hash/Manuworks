@@ -122,7 +122,7 @@ class _SearchScreenState extends ConsumerState<SearchScreen> {
         if (state.error != null)
           Container(margin: const EdgeInsets.all(AppSpacing.md),
               padding: const EdgeInsets.all(AppSpacing.md),
-              decoration: BoxDecoration(color: AppColors.errorContainer, borderRadius: AppRadius.md),
+              decoration: const BoxDecoration(color: AppColors.errorContainer, borderRadius: AppRadius.md),
               child: Text(state.error!, style: const TextStyle(color: AppColors.error))),
 
         if (state.ragAnswer != null)

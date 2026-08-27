@@ -2,10 +2,15 @@
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../../../core/theme/app_theme.dart';
 import '../providers/ai_provider.dart';
+import 'chat_history_sheet.dart';
 
 class ChatScreen extends ConsumerStatefulWidget {
   final String documentId;
-  const ChatScreen({super.key, required this.documentId});
+  /// When resuming a past conversation from the History panel (or a deep
+  /// link), pass its session id to load that conversation instead of
+  /// starting a blank "New Chat".
+  final String? initialSessionId;
+  const ChatScreen({super.key, required this.documentId, this.initialSessionId});
   @override
   ConsumerState<ChatScreen> createState() => _ChatScreenState();
 }
@@ -18,8 +23,23 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
   void initState() {
     super.initState();
     WidgetsBinding.instance.addPostFrameCallback((_) {
-      ref.read(chatProvider(widget.documentId).notifier).startSession();
+      ref.read(chatProvider(widget.documentId).notifier)
+          .startSession(sessionId: widget.initialSessionId);
+      if (widget.initialSessionId != null) _scrollToBottom();
     });
+  }
+
+  Future<void> _openHistory() async {
+    final chosenSessionId =
+        await showChatHistorySheet(context, documentId: widget.documentId);
+    if (chosenSessionId == null || !mounted) return;
+    await ref.read(chatProvider(widget.documentId).notifier)
+        .startSession(sessionId: chosenSessionId);
+    _scrollToBottom();
+  }
+
+  void _startNewChat() {
+    ref.read(chatProvider(widget.documentId).notifier).startNewChat();
   }
 
   @override
@@ -53,14 +73,24 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
         leading: const BackButton(),
         title: const Text('Chat with Document'),
         actions: [
+          IconButton(
+            icon: const Icon(Icons.add_comment_outlined),
+            tooltip: 'New chat',
+            onPressed: state.isLoading ? null : _startNewChat,
+          ),
+          IconButton(
+            icon: const Icon(Icons.history_rounded),
+            tooltip: 'Chat history',
+            onPressed: _openHistory,
+          ),
           Container(
             margin: const EdgeInsets.only(right: AppSpacing.md),
             padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
-            decoration: BoxDecoration(color: AppColors.accentContainer, borderRadius: AppRadius.full),
+            decoration: const BoxDecoration(color: AppColors.accentContainer, borderRadius: AppRadius.full),
             child: Row(mainAxisSize: MainAxisSize.min, children: [
               const Icon(Icons.auto_awesome, size: 14, color: AppColors.accent),
               const SizedBox(width: 4),
-              Text('Gemini', style: theme.textTheme.labelSmall?.copyWith(color: AppColors.accent)),
+              Text('AI', style: theme.textTheme.labelSmall?.copyWith(color: AppColors.accent)),
             ]),
           ),
         ],
@@ -70,12 +100,14 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
           Container(
             margin: const EdgeInsets.all(AppSpacing.sm),
             padding: const EdgeInsets.all(AppSpacing.sm),
-            decoration: BoxDecoration(color: AppColors.errorContainer, borderRadius: AppRadius.md),
+            decoration: const BoxDecoration(color: AppColors.errorContainer, borderRadius: AppRadius.md),
             child: Text(state.error!, style: const TextStyle(color: AppColors.error, fontSize: 13)),
           ),
 
         Expanded(
-          child: state.messages.isEmpty
+          child: state.isLoadingHistory
+              ? const Center(child: CircularProgressIndicator())
+              : state.messages.isEmpty
               ? _WelcomeMessage(isLoading: state.isLoading)
               : ListView.builder(
                   controller: _scrollController,
@@ -91,7 +123,7 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
         // Input
         Container(
           padding: const EdgeInsets.all(AppSpacing.md),
-          decoration: BoxDecoration(
+          decoration: const BoxDecoration(
             color: AppColors.surface,
             border: Border(top: BorderSide(color: AppColors.outline)),
           ),

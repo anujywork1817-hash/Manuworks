@@ -285,12 +285,14 @@ final aiProvider = StateNotifierProvider<AINotifier, AIState>(
   (ref) => AINotifier(),
 );
 
-// ─── Chat (Q&A) ─────────────────────────────────────────────────────────────
+// ─── Chat (Q&A, with real persisted history) ──────────────────────────────────
 //
-// Backend's /documents/:id/chat endpoint answers each question directly
-// (it's a single-shot Q&A call, not a stateful session). We keep message
-// history client-side and resend it isn't required by backend, but we keep
-// the conversation displayed locally.
+// Backend persists every conversation as a chat_session + its chat_messages
+// (see internal/chat). Starting a session (first message) returns a
+// session_id; every later message in the same conversation goes to
+// /chat/:session_id/message. History is fetched from the backend, not kept
+// only in memory, so a session survives navigating away and reopening the
+// app — the whole point of "continue chat from where they left off".
 
 class ChatMessage {
   final String id;
@@ -306,39 +308,133 @@ class ChatMessage {
   });
 
   bool get isUser => role == 'user';
+
+  factory ChatMessage.fromJson(Map<String, dynamic> json) => ChatMessage(
+        id: (json['id'] ?? '').toString(),
+        role: (json['role'] ?? 'assistant').toString(),
+        content: (json['content'] ?? '').toString(),
+        createdAt: DateTime.tryParse((json['created_at'] ?? '').toString()) ??
+            DateTime.now(),
+      );
 }
+
+/// One row in the History panel — a past conversation about this document.
+class ChatSessionSummary {
+  final String id;
+  final String documentId;
+  final String title;
+  final String lastMessage;
+  final int messageCount;
+  final DateTime createdAt;
+  final DateTime updatedAt;
+
+  const ChatSessionSummary({
+    required this.id,
+    required this.documentId,
+    required this.title,
+    required this.lastMessage,
+    required this.messageCount,
+    required this.createdAt,
+    required this.updatedAt,
+  });
+
+  factory ChatSessionSummary.fromJson(Map<String, dynamic> json) =>
+      ChatSessionSummary(
+        id: (json['id'] ?? '').toString(),
+        documentId: (json['document_id'] ?? '').toString(),
+        title: (json['title'] ?? '').toString(),
+        lastMessage: (json['last_message'] ?? '').toString(),
+        messageCount: (json['message_count'] as num?)?.toInt() ?? 0,
+        createdAt: DateTime.tryParse((json['created_at'] ?? '').toString()) ??
+            DateTime.now(),
+        updatedAt: DateTime.tryParse((json['updated_at'] ?? '').toString()) ??
+            DateTime.now(),
+      );
+}
+
+/// Lists this document's past chat sessions, newest-continued first —
+/// backs the History panel. `.family` keyed by documentId; invalidate after
+/// sending a message / deleting a session so the list stays current.
+final chatSessionsProvider =
+    FutureProvider.family<List<ChatSessionSummary>, String>((ref, documentId) async {
+  try {
+    final res = await DioClient.get('/documents/$documentId/chat/sessions');
+    final list = res['data'] as List? ?? [];
+    return list
+        .map((e) => ChatSessionSummary.fromJson(e as Map<String, dynamic>))
+        .toList();
+  } catch (_) {
+    return [];
+  }
+});
 
 class ChatState {
   final List<ChatMessage> messages;
   final bool isLoading;
+  final bool isLoadingHistory;
   final String? error;
+  final String? sessionId; // null until the first message starts a session
 
   const ChatState({
     this.messages = const [],
     this.isLoading = false,
+    this.isLoadingHistory = false,
     this.error,
+    this.sessionId,
   });
 
   ChatState copyWith({
     List<ChatMessage>? messages,
     bool? isLoading,
+    bool? isLoadingHistory,
     String? error,
+    String? sessionId,
+    bool clearSessionId = false,
   }) =>
       ChatState(
         messages: messages ?? this.messages,
         isLoading: isLoading ?? this.isLoading,
+        isLoadingHistory: isLoadingHistory ?? this.isLoadingHistory,
         error: error,
+        sessionId: clearSessionId ? null : (sessionId ?? this.sessionId),
       );
 }
 
 class ChatNotifier extends StateNotifier<ChatState> {
   final String documentId;
-  ChatNotifier(this.documentId) : super(const ChatState());
+  final Ref ref;
+  ChatNotifier(this.documentId, this.ref) : super(const ChatState());
 
-  /// No-op kept for compatibility with screens that call startSession().
-  /// Backend has no real session concept — each /chat call is single-shot.
-  Future<void> startSession() async {
-    // Nothing to initialize; backend doesn't require a session handshake.
+  /// Called once when the chat screen opens. With no [sessionId], this is a
+  /// blank "New Chat" — the first message you send creates the session.
+  /// With a [sessionId] (resuming from History), loads that session's full
+  /// message log from the backend so the conversation continues exactly
+  /// where it left off.
+  Future<void> startSession({String? sessionId}) async {
+    if (sessionId == null) {
+      state = const ChatState();
+      return;
+    }
+    state = state.copyWith(isLoadingHistory: true, error: null);
+    try {
+      final res = await DioClient.get('/chat/$sessionId/history');
+      final list = res['data'] as List? ?? [];
+      final messages = list
+          .map((e) => ChatMessage.fromJson(e as Map<String, dynamic>))
+          .toList();
+      state = ChatState(messages: messages, sessionId: sessionId);
+    } catch (e) {
+      state = state.copyWith(
+        isLoadingHistory: false,
+        error: 'Could not load that conversation: $e',
+      );
+    }
+  }
+
+  /// Clears the current conversation on-screen so the next message starts a
+  /// brand-new session, without losing the old one (it stays in History).
+  void startNewChat() {
+    state = const ChatState();
   }
 
   Future<void> sendMessage(String message) async {
@@ -355,18 +451,23 @@ class ChatNotifier extends StateNotifier<ChatState> {
     );
 
     try {
-      final response = await DioClient.post(
-        '/documents/$documentId/chat',
-        data: {'question': message},
-      );
-      final data = response['data'];
-
-      String answer;
-      if (data is Map) {
-        answer = (data['answer'] ?? data['message'] ?? data.toString()).toString();
+      final Map<String, dynamic> data;
+      if (state.sessionId == null) {
+        final response = await DioClient.post(
+          '/documents/$documentId/chat',
+          data: {'message': message},
+        );
+        data = response['data'] as Map<String, dynamic>;
       } else {
-        answer = data.toString();
+        final response = await DioClient.post(
+          '/chat/${state.sessionId}/message',
+          data: {'message': message},
+        );
+        data = response['data'] as Map<String, dynamic>;
       }
+
+      final answer = (data['answer'] ?? '').toString();
+      final newSessionId = (data['session_id'] as String?) ?? state.sessionId;
 
       final assistantMsg = ChatMessage(
         id: '${DateTime.now().millisecondsSinceEpoch}_ai',
@@ -378,10 +479,25 @@ class ChatNotifier extends StateNotifier<ChatState> {
       state = state.copyWith(
         messages: [...state.messages, assistantMsg],
         isLoading: false,
+        sessionId: newSessionId,
       );
+
+      // Refresh the History list so this session (new, or just-updated)
+      // shows up with its latest message right away.
+      ref.invalidate(chatSessionsProvider(documentId));
     } catch (e) {
       state = state.copyWith(isLoading: false, error: _friendlyError(e.toString()));
     }
+  }
+
+  Future<void> deleteSession(String sessionId) async {
+    try {
+      await DioClient.delete('/chat/$sessionId');
+      ref.invalidate(chatSessionsProvider(documentId));
+      if (state.sessionId == sessionId) {
+        state = const ChatState();
+      }
+    } catch (_) {}
   }
 
   String _friendlyError(String raw) {
@@ -399,5 +515,5 @@ class ChatNotifier extends StateNotifier<ChatState> {
 
 final chatProvider =
     StateNotifierProvider.family<ChatNotifier, ChatState, String>(
-  (ref, documentId) => ChatNotifier(documentId),
+  (ref, documentId) => ChatNotifier(documentId, ref),
 );

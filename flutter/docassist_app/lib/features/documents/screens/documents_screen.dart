@@ -3,10 +3,15 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:file_picker/file_picker.dart';
 import 'package:go_router/go_router.dart';
 import 'package:timeago/timeago.dart' as timeago;
+import 'package:path_provider/path_provider.dart';
+import 'package:open_file/open_file.dart';
 import '../../../core/theme/app_theme.dart';
+import '../../../core/network/dio_client.dart';
 import '../providers/document_provider.dart';
 import '../providers/favourites_provider.dart';
 
+/// Documents tab: upload a file and see your upload history. Tapping a
+/// document opens its detail screen (chat / AI features / etc. live there).
 class DocumentsScreen extends ConsumerStatefulWidget {
   const DocumentsScreen({super.key});
   @override
@@ -30,16 +35,53 @@ class _DocumentsScreenState extends ConsumerState<DocumentsScreen> {
   Future<void> _pickAndUpload() async {
     final result = await FilePicker.platform.pickFiles(
       type: FileType.custom, allowedExtensions: ['pdf', 'docx', 'doc', 'txt'],
+      withData: true, // required on mobile/desktop to get bytes for web-style upload; web always includes bytes
     );
     if (result == null || result.files.isEmpty) return;
     final file = result.files.first;
-    if (file.path == null) return;
-    final success = await ref.read(documentProvider.notifier).uploadDocument(file.path!, file.name);
-    if (mounted) {
-      ScaffoldMessenger.of(context).showSnackBar(SnackBar(
-        content: Text(success ? '${file.name} uploaded!' : 'Upload failed'),
-        backgroundColor: success ? AppColors.success : AppColors.error,
-      ));
+    final success = await ref.read(documentProvider.notifier).uploadPlatformFile(file);
+    if (!mounted) return;
+    if (!success) {
+      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
+        content: Text('Upload failed'), backgroundColor: AppColors.error));
+      return;
+    }
+    ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
+      content: Text('Document uploaded'), behavior: SnackBarBehavior.floating));
+  }
+
+  // Tapping a document just shows the document as it was uploaded (title,
+  // type, size, status). It no longer navigates to the AI Features screen —
+  // it downloads the original uploaded file and opens it with the device's
+  // own PDF/DOCX/TXT viewer, i.e. the document exactly as it was uploaded.
+  String? _openingId; // guards against double-taps while a download is in flight
+  Future<void> _openDocument(Document doc) async {
+    if (_openingId == doc.id) return;
+    setState(() => _openingId = doc.id);
+    try {
+      final dir = await getTemporaryDirectory();
+      final ext = doc.fileType.isNotEmpty ? doc.fileType.toLowerCase() : 'pdf';
+      final savePath = '${dir.path}/${doc.id}.$ext';
+
+      await DioClient.instance.download('/documents/${doc.id}/download', savePath);
+
+      if (!mounted) return;
+      final result = await OpenFile.open(savePath);
+      if (result.type != ResultType.done && mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+          content: Text('Could not open document: ${result.message}'),
+          backgroundColor: AppColors.error,
+        ));
+      }
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+          content: Text('Could not download document: $e'),
+          backgroundColor: AppColors.error,
+        ));
+      }
+    } finally {
+      if (mounted) setState(() => _openingId = null);
     }
   }
 
@@ -49,9 +91,12 @@ class _DocumentsScreenState extends ConsumerState<DocumentsScreen> {
     final favIds = ref.watch(favouritesProvider);
     final theme = Theme.of(context);
     return Scaffold(
-
       appBar: AppBar(
-        title: const Text('Documents'),
+        title: const Row(mainAxisSize: MainAxisSize.min, children: [
+          Icon(Icons.folder_outlined, size: 20),
+          SizedBox(width: 8),
+          Text('Documents'),
+        ]),
         actions: [
           IconButton(icon: const Icon(Icons.star_outline_rounded),
             tooltip: 'Favourites',
@@ -60,70 +105,73 @@ class _DocumentsScreenState extends ConsumerState<DocumentsScreen> {
             onPressed: () => ref.read(documentProvider.notifier).loadDocuments()),
         ],
       ),
-      floatingActionButtonLocation: FloatingActionButtonLocation.endFloat,
-      floatingActionButton: FloatingActionButton(
-        onPressed: state.isUploading ? null : _pickAndUpload,
-        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
-        tooltip: 'Upload Document',
-        child: const Icon(Icons.upload_file_outlined),
-      ),
-      body: Column(children: [
-        Padding(
+      body: SafeArea(
+        child: ListView(
           padding: const EdgeInsets.all(AppSpacing.md),
-          child: TextField(
-            controller: _searchController,
-            decoration: const InputDecoration(
-              hintText: 'Search documents...', prefixIcon: Icon(Icons.search_outlined)),
-            onChanged: (v) => ref.read(documentProvider.notifier).loadDocuments(search: v),
-          ),
-        ),
-        if (state.isUploading)
-          Padding(
-            padding: const EdgeInsets.symmetric(horizontal: AppSpacing.md),
-            child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+          children: [
+            Text(
+              'Upload a PDF, DOCX, or TXT file. Every document you upload is saved here.',
+              style: theme.textTheme.bodyMedium?.copyWith(color: AppColors.textSecondary),
+            ),
+            const SizedBox(height: AppSpacing.md),
+            SizedBox(
+              width: double.infinity,
+              child: ElevatedButton.icon(
+                onPressed: state.isUploading ? null : _pickAndUpload,
+                style: ElevatedButton.styleFrom(
+                  backgroundColor: AppColors.primary,
+                  foregroundColor: Colors.white,
+                  padding: const EdgeInsets.symmetric(vertical: 16),
+                  shape: const RoundedRectangleBorder(borderRadius: AppRadius.md),
+                ),
+                icon: const Icon(Icons.upload_file_outlined),
+                label: const Text('Upload Document',
+                    style: TextStyle(fontWeight: FontWeight.w600)),
+              ),
+            ),
+            if (state.isUploading) ...[
+              const SizedBox(height: AppSpacing.md),
               Text('Uploading... ${(state.uploadProgress * 100).toInt()}%',
                   style: theme.textTheme.bodySmall),
               const SizedBox(height: 4),
               LinearProgressIndicator(value: state.uploadProgress),
+            ],
+            if (state.error != null) ...[
               const SizedBox(height: AppSpacing.md),
-            ]),
-          ),
-        if (state.error != null)
-          Padding(
-            padding: const EdgeInsets.symmetric(horizontal: AppSpacing.md),
-            child: Container(
-              padding: const EdgeInsets.all(AppSpacing.md),
-              decoration: const BoxDecoration(color: AppColors.errorContainer, borderRadius: AppRadius.md),
-              child: Row(children: [
-                const Icon(Icons.error_outline, color: AppColors.error),
-                const SizedBox(width: AppSpacing.sm),
-                Expanded(child: Text(state.error!, style: const TextStyle(color: AppColors.error))),
-              ]),
-            ),
-          ),
-        Expanded(
-          child: state.isLoading
-              ? const Center(child: CircularProgressIndicator())
-              : state.documents.isEmpty
-                  ? _EmptyState(onUpload: _pickAndUpload)
-                  : RefreshIndicator(
-                      onRefresh: () => ref.read(documentProvider.notifier).loadDocuments(),
-                      child: ListView.builder(
-                        padding: const EdgeInsets.symmetric(horizontal: AppSpacing.md),
-                        itemCount: state.documents.length,
-                        itemBuilder: (context, i) => _DocumentCard(
-                          document: state.documents[i],
-                          isFavourite: favIds.contains(state.documents[i].id),
-                          onToggleFav: () => ref
-                              .read(favouritesProvider.notifier)
-                              .toggle(state.documents[i].id),
-                          onTap: () { debugPrint('NAV TO DOC ID: ${state.documents[i].id}'); context.push('/documents/${state.documents[i].id}'); },
-                          onDelete: () => _confirmDelete(context, state.documents[i]),
-                        ),
-                      ),
-                    ),
+              Container(
+                padding: const EdgeInsets.all(AppSpacing.md),
+                decoration: const BoxDecoration(color: AppColors.errorContainer, borderRadius: AppRadius.md),
+                child: Row(children: [
+                  const Icon(Icons.error_outline, color: AppColors.error),
+                  const SizedBox(width: AppSpacing.sm),
+                  Expanded(child: Text(state.error!, style: const TextStyle(color: AppColors.error))),
+                ]),
+              ),
+            ],
+
+            const SizedBox(height: AppSpacing.lg),
+            if (!state.isLoading && state.documents.isNotEmpty)
+              Text('History', style: theme.textTheme.titleMedium),
+            const SizedBox(height: AppSpacing.sm),
+            if (state.isLoading)
+              const Center(child: Padding(
+                padding: EdgeInsets.all(24),
+                child: CircularProgressIndicator(),
+              ))
+            else if (state.documents.isEmpty)
+              _EmptyState(onUpload: _pickAndUpload)
+            else
+              ...state.documents.map((doc) => _HistoryTile(
+                document: doc,
+                isFavourite: favIds.contains(doc.id),
+                isOpening: _openingId == doc.id,
+                onToggleFav: () => ref.read(favouritesProvider.notifier).toggle(doc.id),
+                onTap: () => _openDocument(doc),
+                onDelete: () => _confirmDelete(context, doc),
+              )),
+          ],
         ),
-      ]),
+      ),
     );
   }
 
@@ -134,7 +182,10 @@ class _DocumentsScreenState extends ConsumerState<DocumentsScreen> {
       actions: [
         TextButton(onPressed: () => Navigator.pop(ctx), child: const Text('Cancel')),
         TextButton(
-          onPressed: () async { Navigator.pop(ctx); await ref.read(documentProvider.notifier).deleteDocument(doc.id); },
+          onPressed: () async {
+            Navigator.pop(ctx);
+            await ref.read(documentProvider.notifier).deleteDocument(doc.id);
+          },
           style: TextButton.styleFrom(foregroundColor: AppColors.error),
           child: const Text('Delete'),
         ),
@@ -143,19 +194,22 @@ class _DocumentsScreenState extends ConsumerState<DocumentsScreen> {
   }
 }
 
-class _DocumentCard extends StatelessWidget {
-  final Document document; final VoidCallback onTap; final VoidCallback onDelete;
-  final bool isFavourite; final VoidCallback onToggleFav;
-  const _DocumentCard({required this.document, required this.onTap, required this.onDelete,
-      required this.isFavourite, required this.onToggleFav});
-
-  Color get _typeColor {
-    switch (document.fileType.toLowerCase()) {
-      case 'pdf': return AppColors.pdfColor;
-      case 'docx': case 'doc': return AppColors.docxColor;
-      default: return AppColors.txtColor;
-    }
-  }
+// ── History row (upload history) ───────────────────────────────────────────
+class _HistoryTile extends StatelessWidget {
+  final Document document;
+  final bool isFavourite;
+  final bool isOpening;
+  final VoidCallback onTap;
+  final VoidCallback onDelete;
+  final VoidCallback onToggleFav;
+  const _HistoryTile({
+    required this.document,
+    required this.isFavourite,
+    required this.isOpening,
+    required this.onTap,
+    required this.onDelete,
+    required this.onToggleFav,
+  });
 
   @override
   Widget build(BuildContext context) {
@@ -163,60 +217,35 @@ class _DocumentCard extends StatelessWidget {
     return Card(
       margin: const EdgeInsets.only(bottom: AppSpacing.sm),
       child: InkWell(
-        onTap: onTap, borderRadius: AppRadius.lg,
+        onTap: isOpening ? null : onTap,
+        borderRadius: AppRadius.lg,
         child: Padding(
-          padding: const EdgeInsets.all(AppSpacing.md),
+          padding: const EdgeInsets.symmetric(horizontal: AppSpacing.md, vertical: 6),
           child: Row(children: [
-            Container(
-              width: 48, height: 48,
-              decoration: BoxDecoration(color: _typeColor.withValues(alpha: 0.1), borderRadius: AppRadius.md),
-              child: Center(child: Text(document.fileType.toUpperCase(),
-                  style: TextStyle(color: _typeColor, fontWeight: FontWeight.bold, fontSize: 11))),
+            isOpening
+                ? const SizedBox(
+                    width: 20, height: 20,
+                    child: CircularProgressIndicator(strokeWidth: 2))
+                : const Icon(Icons.description_outlined, size: 20, color: AppColors.textSecondary),
+            const SizedBox(width: AppSpacing.sm),
+            Expanded(
+              child: Text(document.title, style: theme.textTheme.bodyMedium,
+                  maxLines: 1, overflow: TextOverflow.ellipsis),
             ),
-            const SizedBox(width: AppSpacing.md),
-            Expanded(child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-              Text(document.title, style: theme.textTheme.titleSmall, maxLines: 1, overflow: TextOverflow.ellipsis),
-              const SizedBox(height: 4),
-              Row(children: [
-                Flexible(
-                  child: Text(
-                    '${document.fileSizeHuman} · ${timeago.format(document.createdAt)}',
-                    style: theme.textTheme.bodySmall,
-                    maxLines: 1,
-                    overflow: TextOverflow.ellipsis,
-                  ),
-                ),
-                if (document.isProcessed) ...[
-                  const SizedBox(width: 4),
-                  Icon(Icons.auto_awesome, size: 11, color: theme.colorScheme.primary),
-                  const SizedBox(width: 2),
-                  Text('AI ready',
-                      style: theme.textTheme.bodySmall
-                          ?.copyWith(color: theme.colorScheme.primary)),
-                ],
-              ]),
-            ])),
+            Text(timeago.format(document.createdAt), style: theme.textTheme.bodySmall),
             IconButton(
               icon: Icon(
                 isFavourite ? Icons.star_rounded : Icons.star_outline_rounded,
                 color: isFavourite ? AppColors.warning : theme.colorScheme.outline,
+                size: 20,
               ),
               tooltip: isFavourite ? 'Remove from favourites' : 'Add to favourites',
               onPressed: onToggleFav,
             ),
             PopupMenuButton<String>(
-              icon: const Icon(Icons.more_vert_outlined),
-              onSelected: (v) {
-                if (v == 'delete') onDelete();
-                if (v == 'fav') onToggleFav();
-              },
+              icon: const Icon(Icons.more_vert_outlined, size: 20),
+              onSelected: (v) { if (v == 'delete') onDelete(); },
               itemBuilder: (_) => [
-                PopupMenuItem(value: 'fav', child: Row(children: [
-                  Icon(isFavourite ? Icons.star_outline_rounded : Icons.star_rounded,
-                      color: AppColors.warning, size: 18),
-                  const SizedBox(width: 8),
-                  Text(isFavourite ? 'Remove from favourites' : 'Add to favourites'),
-                ])),
                 const PopupMenuItem(value: 'delete', child: Row(children: [
                   Icon(Icons.delete_outline, color: AppColors.error, size: 18),
                   SizedBox(width: 8),
@@ -235,14 +264,14 @@ class _EmptyState extends StatelessWidget {
   final VoidCallback onUpload;
   const _EmptyState({required this.onUpload});
   @override
-  Widget build(BuildContext context) => Center(child: Column(mainAxisAlignment: MainAxisAlignment.center, children: [
-    const Icon(Icons.folder_open_outlined, size: 80, color: AppColors.textTertiary),
-    const SizedBox(height: AppSpacing.md),
-    Text('No documents yet', style: Theme.of(context).textTheme.titleMedium),
-    const SizedBox(height: AppSpacing.sm),
-    Text('Upload your first PDF or DOCX', style: Theme.of(context).textTheme.bodyMedium),
-    const SizedBox(height: AppSpacing.lg),
-    ElevatedButton.icon(onPressed: onUpload, icon: const Icon(Icons.upload_file_outlined), label: const Text('Upload Document')),
-  ]));
+  Widget build(BuildContext context) => Padding(
+    padding: const EdgeInsets.symmetric(vertical: 32),
+    child: Center(child: Column(children: [
+      const Icon(Icons.folder_open_outlined, size: 64, color: AppColors.textTertiary),
+      const SizedBox(height: AppSpacing.md),
+      Text('No documents yet', style: Theme.of(context).textTheme.titleMedium),
+      const SizedBox(height: AppSpacing.sm),
+      Text('Upload your first PDF or DOCX', style: Theme.of(context).textTheme.bodyMedium),
+    ])),
+  );
 }
-

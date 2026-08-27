@@ -1,13 +1,12 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
-import 'package:timeago/timeago.dart' as timeago;
 import '../../../core/theme/app_theme.dart';
 import '../../../core/router/router.dart';
 import '../../../core/network/dio_client.dart';
-import '../../documents/providers/document_provider.dart';
 import '../../auth/providers/auth_provider.dart';
 import '../../notifications/providers/notifications_provider.dart';
+import '../../../core/services/usage_tracker.dart';
 
 final dashboardStatsProvider = FutureProvider<Map<String, dynamic>>((ref) async {
   try {
@@ -26,7 +25,7 @@ class DashboardScreen extends ConsumerWidget {
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
-    final statsAsync  = ref.watch(dashboardStatsProvider);
+    ref.watch(dashboardStatsProvider); // keeps stats cached/refreshed for other screens
     final userAsync   = ref.watch(currentUserProvider);
     final unreadCount = ref.watch(notificationsProvider.select((s) => s.unreadCount));
     final cs          = Theme.of(context).colorScheme;
@@ -92,204 +91,122 @@ class DashboardScreen extends ConsumerWidget {
                 ),
               ),
 
-              // ── AI Chat banner ─────────────────────────────────────────
+              // ── Quick actions: Dashboard + Recharge Credits ──────────────
               SliverToBoxAdapter(
                 child: Padding(
                   padding: const EdgeInsets.fromLTRB(20, 20, 20, 0),
-                  child: GestureDetector(
-                    onTap: () => context.go(AppRoutes.aiChat),
-                    child: Container(
-                      decoration: BoxDecoration(
-                        color: cs.primary,
-                        borderRadius: BorderRadius.circular(16),
-                      ),
-                      padding: const EdgeInsets.all(18),
-                      child: Row(children: [
-                        Expanded(child: Column(
-                          crossAxisAlignment: CrossAxisAlignment.start,
-                          children: [
-                            Text('AI Legal Assistant',
-                              style: tt.titleSmall?.copyWith(
-                                color: cs.onPrimary,
-                                fontWeight: FontWeight.w700,
-                              )),
-                            const SizedBox(height: 4),
-                            Text('Ask anything about your documents,\ncases, or legal queries.',
-                              style: tt.bodySmall?.copyWith(
-                                color: cs.onPrimary.withValues(alpha: 0.72),
-                                height: 1.5,
-                              )),
-                            const SizedBox(height: 14),
-                            Container(
-                              padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 7),
-                              decoration: BoxDecoration(
-                                color: cs.onPrimary,
-                                borderRadius: BorderRadius.circular(8),
-                              ),
-                              child: Text('Start Chatting',
-                                style: tt.labelMedium?.copyWith(
-                                  color: cs.primary,
-                                  fontWeight: FontWeight.w700,
-                                )),
-                            ),
-                          ],
-                        )),
-                        const SizedBox(width: 16),
-                        Icon(Icons.auto_awesome_rounded,
-                            color: cs.onPrimary.withValues(alpha: 0.3), size: 56),
-                      ]),
-                    ),
-                  ),
+                  child: IntrinsicHeight(child: Row(children: [
+                    Expanded(child: _QuickCard(
+                      icon: Icons.bar_chart_rounded,
+                      title: 'Dashboard',
+                      subtitle: 'View your usage & activity stats',
+                      onTap: () => context.push(AppRoutes.usageDashboard),
+                      cs: cs, tt: tt,
+                    )),
+                    const SizedBox(width: 10),
+                    Expanded(child: _QuickCard(
+                      icon: Icons.bolt_rounded,
+                      title: 'Recharge Credits',
+                      subtitle: 'Top up credits to keep using AI tools',
+                      onTap: () => context.push(AppRoutes.rechargeCredits),
+                      cs: cs, tt: tt,
+                    )),
+                  ])),
                 ),
               ),
 
-              // ── Feature shortcuts ──────────────────────────────────────
-              SliverToBoxAdapter(
-                child: Padding(
-                  padding: const EdgeInsets.fromLTRB(20, 20, 20, 0),
-                  child: Column(children: [
-                    Row(children: [
-                      _FeatureChip(icon: Icons.upload_file_outlined, label: 'Upload',
-                          onTap: () => context.go(AppRoutes.documents), cs: cs, tt: tt),
-                      const SizedBox(width: 10),
-                      _FeatureChip(icon: Icons.draw_outlined, label: 'Draft',
-                          onTap: () => context.push(AppRoutes.draft), cs: cs, tt: tt),
-                      const SizedBox(width: 10),
-                      _FeatureChip(icon: Icons.document_scanner_outlined, label: 'Scan',
-                          onTap: () => context.push(AppRoutes.ocrScan), cs: cs, tt: tt),
-                      const SizedBox(width: 10),
-                      _FeatureChip(icon: Icons.compare_arrows_rounded, label: 'Compare',
-                          onTap: () => context.push(AppRoutes.compare), cs: cs, tt: tt),
-                    ]),
-                    const SizedBox(height: 10),
-                    Row(children: [
-                      _FeatureChip(
-                        icon: Icons.reply_all_outlined,
-                        label: 'Reply Gen',
-                        onTap: () => context.push(AppRoutes.complaintReply),
-                        cs: cs, tt: tt,
-                      ),
-                    ]),
-                  ]),
-                ),
-              ),
 
-              // ── Quick Access ───────────────────────────────────────────
+              // ── AI Tools ──────────────────────────────────────────────────
               SliverToBoxAdapter(
                 child: Padding(
                   padding: const EdgeInsets.fromLTRB(20, 24, 20, 0),
                   child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-                    Text('Quick Access', style: tt.titleMedium),
+                    Text('AI Tools', style: tt.titleMedium),
+                    const SizedBox(height: 4),
+                    Text('AI-powered tools for your documents',
+                        style: tt.bodySmall?.copyWith(color: AppColors.textSecondary)),
                     const SizedBox(height: 14),
-                    Row(children: [
-                      Expanded(child: _QuickCard(
-                        icon: Icons.folder_outlined,
-                        title: 'Documents',
-                        subtitle: 'View & manage',
-                        onTap: () => context.go(AppRoutes.documents),
+                    IntrinsicHeight(child: Row(children: [
+                      Expanded(child: _AiToolCard(
+                        icon: Icons.summarize_outlined,
+                        title: 'Generate Summary',
+                        subtitle: 'Turn long docs into concise summaries',
+                        credits: UsageTracker.creditsFor('summarize'),
+                        onTap: () => context.push('${AppRoutes.aiFeatures}/summarize'),
                         cs: cs, tt: tt,
                       )),
                       const SizedBox(width: 10),
-                      Expanded(child: _QuickCard(
-                        icon: Icons.cases_outlined,
-                        title: 'Matters',
-                        subtitle: 'Case folders',
-                        onTap: () => context.go(AppRoutes.matters),
+                      Expanded(child: _AiToolCard(
+                        icon: Icons.edit_note_outlined,
+                        title: 'Drafter',
+                        subtitle: 'Draft documents tailored to your needs',
+                        credits: UsageTracker.creditsFor('draft'),
+                        onTap: () => context.push(AppRoutes.draft),
                         cs: cs, tt: tt,
                       )),
-                    ]),
+                    ])),
                     const SizedBox(height: 10),
-                    Row(children: [
-                      Expanded(child: _QuickCard(
-                        icon: Icons.search_outlined,
-                        title: 'Search',
-                        subtitle: 'Full-text search',
-                        onTap: () => context.push(AppRoutes.search),
+                    IntrinsicHeight(child: Row(children: [
+                      Expanded(child: _AiToolCard(
+                        icon: Icons.translate_outlined,
+                        title: 'Translator',
+                        subtitle: 'Translate documents instantly',
+                        credits: UsageTracker.creditsFor('translate'),
+                        onTap: () => context.push('${AppRoutes.aiFeatures}/translate'),
                         cs: cs, tt: tt,
                       )),
                       const SizedBox(width: 10),
-                      Expanded(child: _QuickCard(
-                        icon: Icons.star_outline_rounded,
-                        title: 'Favourites',
-                        subtitle: 'Saved documents',
-                        onTap: () => context.push(AppRoutes.favourites),
+                      Expanded(child: _AiToolCard(
+                        icon: Icons.document_scanner_outlined,
+                        title: 'OCR',
+                        subtitle: 'Convert scanned docs to editable text',
+                        credits: UsageTracker.creditsFor('ocr'),
+                        onTap: () => context.push(AppRoutes.ocrScan),
                         cs: cs, tt: tt,
                       )),
-                    ]),
+                    ])),
+                    const SizedBox(height: 10),
+                    IntrinsicHeight(child: Row(children: [
+                      Expanded(child: _AiToolCard(
+                        icon: Icons.timeline_outlined,
+                        title: 'Timeline Generator',
+                        subtitle: 'Visualize events in sequence over time',
+                        credits: UsageTracker.creditsFor('timeline'),
+                        onTap: () => context.push('${AppRoutes.aiFeatures}/timeline'),
+                        cs: cs, tt: tt,
+                      )),
+                      const SizedBox(width: 10),
+                      Expanded(child: _AiToolCard(
+                        icon: Icons.chat_bubble_outline_rounded,
+                        title: 'Ask Questions',
+                        subtitle: 'Ask questions & get cited answers',
+                        credits: UsageTracker.creditsFor('ai_chat'),
+                        onTap: () => context.push(AppRoutes.aiChat),
+                        cs: cs, tt: tt,
+                      )),
+                    ])),
+                    const SizedBox(height: 10),
+                    IntrinsicHeight(child: Row(children: [
+                      Expanded(child: _AiToolCard(
+                        icon: Icons.compare_arrows_rounded,
+                        title: 'Compare Documents',
+                        subtitle: 'Compare two documents side by side',
+                        credits: UsageTracker.creditsFor('compare'),
+                        onTap: () => context.push(AppRoutes.compare),
+                        cs: cs, tt: tt,
+                      )),
+                      const SizedBox(width: 10),
+                      Expanded(child: _AiToolCard(
+                        icon: Icons.gavel_outlined,
+                        title: 'Citation Verifier',
+                        subtitle: 'Verify citations instantly',
+                        credits: UsageTracker.creditsFor('citations'),
+                        onTap: () => context.push('${AppRoutes.aiFeatures}/citations'),
+                        cs: cs, tt: tt,
+                      )),
+                    ])),
                   ]),
                 ),
-              ),
-
-              // ── Recent Documents ───────────────────────────────────────
-              SliverToBoxAdapter(
-                child: Padding(
-                  padding: const EdgeInsets.fromLTRB(20, 28, 4, 0),
-                  child: Row(
-                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                    children: [
-                      Text('Recent Documents', style: tt.titleMedium),
-                      TextButton(
-                        onPressed: () => context.go(AppRoutes.documents),
-                        child: const Text('See all'),
-                      ),
-                    ],
-                  ),
-                ),
-              ),
-
-              statsAsync.when(
-                data: (stats) {
-                  final docs = stats['recent_documents'] as List;
-                  if (docs.isEmpty) {
-                    return SliverToBoxAdapter(
-                      child: Padding(
-                        padding: const EdgeInsets.fromLTRB(20, 10, 20, 32),
-                        child: Container(
-                          padding: const EdgeInsets.all(28),
-                          decoration: BoxDecoration(
-                            color: cs.surfaceContainerHighest,
-                            borderRadius: BorderRadius.circular(14),
-                          ),
-                          child: Column(children: [
-                            Icon(Icons.folder_open_outlined,
-                                size: 40, color: cs.outline),
-                            const SizedBox(height: 8),
-                            Text('No documents yet',
-                                style: tt.bodyMedium),
-                            const SizedBox(height: 14),
-                            ElevatedButton(
-                              onPressed: () => context.go(AppRoutes.documents),
-                              child: const Text('Upload Document'),
-                            ),
-                          ]),
-                        ),
-                      ),
-                    );
-                  }
-                  return SliverPadding(
-                    padding: const EdgeInsets.fromLTRB(20, 4, 20, 32),
-                    sliver: SliverList(
-                      delegate: SliverChildBuilderDelegate(
-                        (ctx, i) {
-                          final doc = Document.fromJson(docs[i] as Map<String, dynamic>);
-                          return _RecentDocRow(doc: doc, cs: cs, tt: tt,
-                              onTap: () => context.push('/documents/${doc.id}'));
-                        },
-                        childCount: docs.length,
-                      ),
-                    ),
-                  );
-                },
-                loading: () => SliverPadding(
-                  padding: const EdgeInsets.fromLTRB(20, 4, 20, 32),
-                  sliver: SliverList(
-                    delegate: SliverChildBuilderDelegate(
-                      (_, __) => _SkeletonRow(cs: cs),
-                      childCount: 3,
-                    ),
-                  ),
-                ),
-                error: (_, __) => const SliverToBoxAdapter(child: SizedBox.shrink()),
               ),
             ],
           ),
@@ -337,45 +254,6 @@ class _NotificationBell extends StatelessWidget {
   );
 }
 
-// ── Feature chip ──────────────────────────────────────────────────────────────
-
-class _FeatureChip extends StatelessWidget {
-  final IconData icon;
-  final String label;
-  final VoidCallback onTap;
-  final ColorScheme cs;
-  final TextTheme tt;
-
-  const _FeatureChip({
-    required this.icon, required this.label,
-    required this.onTap, required this.cs, required this.tt,
-  });
-
-  @override
-  Widget build(BuildContext context) => Expanded(
-    child: GestureDetector(
-      onTap: onTap,
-      child: Container(
-        padding: const EdgeInsets.symmetric(vertical: 14),
-        decoration: BoxDecoration(
-          color: cs.surface,
-          borderRadius: BorderRadius.circular(12),
-          border: Border.all(color: cs.outline),
-        ),
-        child: Column(children: [
-          Icon(icon, color: cs.onSurface, size: 22),
-          const SizedBox(height: 6),
-          Text(label,
-            style: tt.labelSmall?.copyWith(
-              color: cs.onSurface.withValues(alpha: 0.7),
-              fontWeight: FontWeight.w600,
-            )),
-        ]),
-      ),
-    ),
-  );
-}
-
 // ── Quick access card ─────────────────────────────────────────────────────────
 
 class _QuickCard extends StatelessWidget {
@@ -400,7 +278,7 @@ class _QuickCard extends StatelessWidget {
         borderRadius: BorderRadius.circular(12),
         border: Border.all(color: cs.outline),
       ),
-      child: Row(children: [
+      child: Row(crossAxisAlignment: CrossAxisAlignment.start, children: [
         Container(
           width: 36, height: 36,
           decoration: BoxDecoration(
@@ -412,8 +290,13 @@ class _QuickCard extends StatelessWidget {
         const SizedBox(width: 10),
         Expanded(child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
           Text(title,
-            style: tt.labelLarge?.copyWith(fontWeight: FontWeight.w700)),
+            maxLines: 2,
+            overflow: TextOverflow.ellipsis,
+            style: tt.labelLarge?.copyWith(fontWeight: FontWeight.w700, height: 1.2)),
+          const SizedBox(height: 2),
           Text(subtitle,
+            maxLines: 1,
+            overflow: TextOverflow.ellipsis,
             style: tt.bodySmall),
         ])),
       ]),
@@ -421,72 +304,90 @@ class _QuickCard extends StatelessWidget {
   );
 }
 
-// ── Recent doc row ────────────────────────────────────────────────────────────
+// ── AI Tool card (title, subtitle, "Try it now" + credit cost) ────────────────
 
-class _RecentDocRow extends StatelessWidget {
-  final Document doc;
+class _AiToolCard extends StatelessWidget {
+  final IconData icon;
+  final String title, subtitle;
+  final int credits;
+  final String? badge; // e.g. 'NEW' / 'PRO'
   final VoidCallback onTap;
   final ColorScheme cs;
   final TextTheme tt;
-  const _RecentDocRow({required this.doc, required this.onTap,
-      required this.cs, required this.tt});
 
-  Color get _typeColor {
-    switch (doc.fileType.toLowerCase()) {
-      case 'pdf':  return AppColors.pdfColor;
-      case 'docx': case 'doc': return AppColors.docxColor;
-      default: return AppColors.txtColor;
-    }
-  }
+  const _AiToolCard({
+    required this.icon, required this.title, required this.subtitle,
+    required this.credits,
+    required this.onTap, required this.cs, required this.tt,
+  }) : badge = null;
 
   @override
   Widget build(BuildContext context) => GestureDetector(
     onTap: onTap,
     child: Container(
-      margin: const EdgeInsets.only(bottom: 8),
-      padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
+      padding: const EdgeInsets.all(12),
       decoration: BoxDecoration(
         color: cs.surface,
         borderRadius: BorderRadius.circular(12),
         border: Border.all(color: cs.outline),
       ),
-      child: Row(children: [
-        Container(
-          width: 40, height: 40,
-          decoration: BoxDecoration(
-            color: _typeColor.withValues(alpha: 0.1),
-            borderRadius: BorderRadius.circular(8),
+      child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+        // Icon + optional badge
+        Row(children: [
+          Container(
+            width: 32, height: 32,
+            decoration: BoxDecoration(
+              color: cs.primaryContainer,
+              borderRadius: BorderRadius.circular(8),
+            ),
+            alignment: Alignment.center,
+            child: Icon(icon, color: cs.primary, size: 16),
           ),
-          child: Center(child: Text(doc.fileType.toUpperCase(),
-              style: TextStyle(color: _typeColor,
-                  fontWeight: FontWeight.w800, fontSize: 10))),
-        ),
-        const SizedBox(width: 12),
-        Expanded(child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-          Text(doc.title, maxLines: 1, overflow: TextOverflow.ellipsis,
-              style: tt.labelLarge),
-          const SizedBox(height: 2),
-          Text('${doc.fileSizeHuman} · ${timeago.format(doc.createdAt)}',
-              style: tt.bodySmall),
-        ])),
-        Icon(Icons.chevron_right_rounded, color: cs.outline, size: 20),
+          if (badge != null) ...[
+            const Spacer(),
+            Container(
+              padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+              decoration: BoxDecoration(
+                color: cs.primary,
+                borderRadius: BorderRadius.circular(20),
+              ),
+              child: Text(
+                badge!,
+                style: TextStyle(
+                  fontSize: 8,
+                  fontWeight: FontWeight.w800,
+                  letterSpacing: 0.3,
+                  color: cs.onPrimary,
+                ),
+              ),
+            ),
+          ],
+        ]),
+        const SizedBox(height: 8),
+        Text(title,
+          maxLines: 1,
+          overflow: TextOverflow.ellipsis,
+          style: tt.labelLarge?.copyWith(fontWeight: FontWeight.w700, height: 1.2)),
+        const SizedBox(height: 2),
+        Text(subtitle,
+          maxLines: 2,
+          overflow: TextOverflow.ellipsis,
+          style: tt.bodySmall?.copyWith(color: AppColors.textSecondary, height: 1.25)),
+        const SizedBox(height: 10),
+        // Bottom: credit cost
+        Row(mainAxisSize: MainAxisSize.min, children: [
+          const Icon(Icons.bolt_rounded, size: 12, color: AppColors.textSecondary),
+          const SizedBox(width: 2),
+          Text(
+            '$credits credits',
+            style: tt.labelSmall?.copyWith(
+              color: AppColors.textSecondary,
+              fontWeight: FontWeight.w600,
+              fontSize: 10,
+            ),
+          ),
+        ]),
       ]),
-    ),
-  );
-}
-
-// ── Skeleton ──────────────────────────────────────────────────────────────────
-
-class _SkeletonRow extends StatelessWidget {
-  final ColorScheme cs;
-  const _SkeletonRow({required this.cs});
-  @override
-  Widget build(BuildContext context) => Container(
-    margin: const EdgeInsets.only(bottom: 8),
-    height: 64,
-    decoration: BoxDecoration(
-      color: cs.surfaceContainerHighest,
-      borderRadius: BorderRadius.circular(12),
     ),
   );
 }

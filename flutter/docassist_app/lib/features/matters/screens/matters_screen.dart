@@ -6,7 +6,8 @@ import '../../../core/theme/app_theme.dart';
 import '../providers/matter_provider.dart';
 
 class MattersScreen extends ConsumerStatefulWidget {
-  const MattersScreen({super.key});
+  final bool autoOpenAdd;
+  const MattersScreen({super.key, this.autoOpenAdd = false});
   @override
   ConsumerState<MattersScreen> createState() => _MattersScreenState();
 }
@@ -15,8 +16,10 @@ class _MattersScreenState extends ConsumerState<MattersScreen> {
   @override
   void initState() {
     super.initState();
-    WidgetsBinding.instance.addPostFrameCallback(
-        (_) => ref.read(matterProvider.notifier).load());
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      ref.read(matterProvider.notifier).load();
+      if (widget.autoOpenAdd) _showCreateDialog();
+    });
   }
 
   Future<void> _showCreateDialog() async {
@@ -29,12 +32,12 @@ class _MattersScreenState extends ConsumerState<MattersScreen> {
     final created = await showDialog<bool>(
       context: context,
       builder: (ctx) => AlertDialog(
-        title: const Text('New Matter', style: TextStyle(fontWeight: FontWeight.bold)),
+        title: const Text('New Case', style: TextStyle(fontWeight: FontWeight.bold)),
         content: SingleChildScrollView(
           child: Column(mainAxisSize: MainAxisSize.min, children: [
-            _field(titleCtrl, 'Matter Title *', Icons.folder_outlined),
+            _field(titleCtrl, 'Case Title *', Icons.folder_outlined),
             const SizedBox(height: 12),
-            _field(matterNoCtrl, 'Matter No. (e.g. CRL/2024/001)', Icons.tag),
+            _field(matterNoCtrl, 'Case No. (e.g. CRL/2024/001)', Icons.tag),
             const SizedBox(height: 12),
             _field(clientCtrl, 'Client Name', Icons.person_outlined),
             const SizedBox(height: 12),
@@ -67,7 +70,7 @@ class _MattersScreenState extends ConsumerState<MattersScreen> {
 
     if (created == true && mounted) {
       ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Matter created'), behavior: SnackBarBehavior.floating),
+        const SnackBar(content: Text('Case created'), behavior: SnackBarBehavior.floating),
       );
     }
   }
@@ -95,7 +98,7 @@ class _MattersScreenState extends ConsumerState<MattersScreen> {
       appBar: AppBar(
         
         elevation: 0,
-        title: const Text('Matters',
+        title: const Text('Cases',
             style: TextStyle(fontWeight: FontWeight.bold, color: AppColors.textPrimary)),
         actions: [
           IconButton(
@@ -108,7 +111,7 @@ class _MattersScreenState extends ConsumerState<MattersScreen> {
       floatingActionButton: FloatingActionButton(
         onPressed: _showCreateDialog,
         shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
-        tooltip: 'New Matter',
+        tooltip: 'New Case',
         child: const Icon(Icons.add),
       ),
       body: state.isLoading
@@ -146,12 +149,12 @@ class _MattersScreenState extends ConsumerState<MattersScreen> {
                 color: cs.onPrimaryContainer, size: 40),
           ),
           const SizedBox(height: 20),
-          Text('No Matters Yet',
+          Text('No Cases Yet',
               style: TextStyle(fontSize: 20, fontWeight: FontWeight.bold,
                   color: cs.onSurface)),
           const SizedBox(height: 8),
           Text(
-            'Create a matter to group related\ndocuments for a case or client.',
+            'Create a case to group related\ndocuments for a case or client.',
             textAlign: TextAlign.center,
             style: TextStyle(fontSize: 14, color: cs.onSurface.withValues(alpha: 0.6), height: 1.5),
           ),
@@ -159,7 +162,7 @@ class _MattersScreenState extends ConsumerState<MattersScreen> {
           ElevatedButton.icon(
             onPressed: _showCreateDialog,
             icon: const Icon(Icons.add),
-            label: const Text('Create Matter'),
+            label: const Text('Create Case'),
           ),
         ]),
       ),
@@ -170,7 +173,7 @@ class _MattersScreenState extends ConsumerState<MattersScreen> {
     showDialog(
       context: context,
       builder: (ctx) => AlertDialog(
-        title: const Text('Delete Matter'),
+        title: const Text('Delete Case'),
         content: Text('Delete "${matter.title}"? Documents will not be deleted.'),
         actions: [
           TextButton(onPressed: () => Navigator.pop(ctx), child: const Text('Cancel')),

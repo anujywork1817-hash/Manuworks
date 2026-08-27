@@ -9,7 +9,7 @@ import '../../features/dashboard/screens/dashboard_screen.dart';
 import '../../features/documents/screens/documents_screen.dart';
 import '../../features/documents/screens/document_detail_screen.dart';
 import '../../features/ai_chat/screens/chat_screen.dart';
-import '../../features/ai_chat/screens/ai_chat_home_screen.dart';
+import '../../features/ai_chat/screens/general_chat_screen.dart';
 import '../../features/matters/screens/matters_screen.dart';
 import '../../features/matters/screens/matter_detail_screen.dart';
 import '../../features/draft/screens/draft_document_screen.dart';
@@ -21,6 +21,10 @@ import '../../features/documents/screens/favourites_screen.dart';
 import '../../features/help/screens/help_center_screen.dart';
 import '../../features/notifications/screens/notifications_screen.dart';
 import '../../features/complaint_reply/screens/complaint_reply_screen.dart';
+import '../../features/ai_features/screens/ai_features_screen.dart';
+import '../../features/ai_features/screens/ai_feature_detail_screen.dart';
+import '../../features/dashboard/screens/usage_dashboard_screen.dart';
+import '../../features/billing/screens/recharge_credits_screen.dart';
 
 class AppRoutes {
   static const splash = '/';
@@ -32,6 +36,7 @@ class AppRoutes {
   static const documentDetail = '/documents/:id';
   static const chat = '/documents/:id/chat';
   static const aiChat = '/ai-chat';
+  static const generalChat = '/ai-chat/general';
   static const matters = '/matters';
   static const matterDetail = '/matters/:id';
   static const draft = '/draft';
@@ -44,6 +49,9 @@ class AppRoutes {
   static const helpCenter = '/help';
   static const notifications = '/notifications';
   static const complaintReply = '/complaint-reply';
+  static const aiFeatures = '/ai-features';
+  static const usageDashboard = '/usage-dashboard';
+  static const rechargeCredits = '/recharge-credits';
 }
 
 class AuthNotifierListenable extends ChangeNotifier {
@@ -108,10 +116,24 @@ final routerProvider = Provider<GoRouter>((ref) {
               ),
             ],
           ),
-          GoRoute(path: AppRoutes.aiChat, builder: (c, s) => const AiChatHomeScreen()),
+          GoRoute(
+            path: AppRoutes.aiFeatures,
+            builder: (c, s) => const AiFeaturesScreen(),
+            routes: [
+              GoRoute(
+                path: ':featureId',
+                builder: (c, s) => AiFeatureDetailScreen(
+                    featureId: s.pathParameters['featureId']!),
+              ),
+            ],
+          ),
+          GoRoute(path: AppRoutes.usageDashboard, builder: (c, s) => const UsageDashboardScreen()),
+          GoRoute(path: AppRoutes.rechargeCredits, builder: (c, s) => const RechargeCreditsScreen()),
+          GoRoute(path: AppRoutes.aiChat, builder: (c, s) => const GeneralChatScreen()),
+          GoRoute(path: AppRoutes.generalChat, builder: (c, s) => const GeneralChatScreen()),
           GoRoute(
             path: AppRoutes.matters,
-            builder: (c, s) => const MattersScreen(),
+            builder: (c, s) => MattersScreen(autoOpenAdd: s.extra == true),
             routes: [
               GoRoute(
                 path: ':id',
@@ -119,7 +141,7 @@ final routerProvider = Provider<GoRouter>((ref) {
               ),
             ],
           ),
-          GoRoute(path: AppRoutes.draft, builder: (c, s) => const DraftDocumentScreen()),
+          GoRoute(path: AppRoutes.draft, builder: (c, s) => DraftDocumentScreen(initialTypeId: s.extra as String?)),
           GoRoute(path: AppRoutes.ocrScan, builder: (c, s) => const OcrScanScreen()),
           GoRoute(path: AppRoutes.compare, builder: (c, s) => const CompareScreen()),
           GoRoute(path: AppRoutes.templates, builder: (c, s) => const _TemplatesScreen()),

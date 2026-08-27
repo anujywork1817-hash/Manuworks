@@ -30,13 +30,13 @@ class _MatterDetailScreenState extends ConsumerState<MatterDetailScreen> {
         title: detailAsync.when(
           data: (d) {
             final m = d['matter'] as Map<String, dynamic>? ?? {};
-            return Text(m['title'] ?? 'Matter',
+            return Text(m['title'] ?? 'Case',
                 overflow: TextOverflow.ellipsis,
                 style: const TextStyle(fontWeight: FontWeight.bold,
                     color: AppColors.textPrimary));
           },
           loading: () => const Text('Loading...'),
-          error: (_, __) => const Text('Matter'),
+          error: (_, __) => const Text('Case'),
         ),
         actions: [
           detailAsync.whenOrNull(
@@ -170,7 +170,7 @@ class _MatterDetailScreenState extends ConsumerState<MatterDetailScreen> {
                 style: TextStyle(fontSize: 15, fontWeight: FontWeight.w600,
                     color: AppColors.textSecondary)),
             const SizedBox(height: 4),
-            const Text('Tap "Add" to link documents to this matter.',
+            const Text('Tap "Add" to link documents to this case.',
                 style: TextStyle(fontSize: 13, color: AppColors.textTertiary)),
             const SizedBox(height: 16),
             ElevatedButton.icon(
@@ -214,7 +214,7 @@ class _MatterDetailScreenState extends ConsumerState<MatterDetailScreen> {
                   color: Colors.grey.shade300,
                   borderRadius: BorderRadius.circular(2))),
           const SizedBox(height: 16),
-          const Text('Add Document to Matter',
+          const Text('Add Document to Case',
               style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold)),
           const SizedBox(height: 8),
           const Divider(),
@@ -255,7 +255,7 @@ class _MatterDetailScreenState extends ConsumerState<MatterDetailScreen> {
                             ref.invalidate(matterDetailProvider(widget.matterId));
                             messenger.showSnackBar(
                               const SnackBar(
-                                  content: Text('Document added to matter'),
+                                  content: Text('Document added to case'),
                                   behavior: SnackBarBehavior.floating),
                             );
                           }
@@ -277,7 +277,7 @@ class _MatterDetailScreenState extends ConsumerState<MatterDetailScreen> {
       ref.invalidate(matterDetailProvider(widget.matterId));
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(
-            content: Text('Document removed from matter'),
+            content: Text('Document removed from case'),
             behavior: SnackBarBehavior.floating),
       );
     }
@@ -295,13 +295,13 @@ class _MatterDetailScreenState extends ConsumerState<MatterDetailScreen> {
       context: context,
       builder: (ctx) => StatefulBuilder(
         builder: (ctx, setS) => AlertDialog(
-          title: const Text('Edit Matter',
+          title: const Text('Edit Case',
               style: TextStyle(fontWeight: FontWeight.bold)),
           content: SingleChildScrollView(
             child: Column(mainAxisSize: MainAxisSize.min, children: [
-              _field(titleCtrl, 'Matter Title *', Icons.folder_outlined),
+              _field(titleCtrl, 'Case Title *', Icons.folder_outlined),
               const SizedBox(height: 12),
-              _field(matterNoCtrl, 'Matter No.', Icons.tag),
+              _field(matterNoCtrl, 'Case No.', Icons.tag),
               const SizedBox(height: 12),
               _field(clientCtrl, 'Client Name', Icons.person_outlined),
               const SizedBox(height: 12),
@@ -433,7 +433,7 @@ class _DocTile extends StatelessWidget {
               icon: const Icon(Icons.remove_circle_outline,
                   color: AppColors.textTertiary, size: 20),
               onPressed: onRemove,
-              tooltip: 'Remove from matter',
+              tooltip: 'Remove from case',
             ),
             const Icon(Icons.chevron_right, color: AppColors.textTertiary, size: 18),
           ]),

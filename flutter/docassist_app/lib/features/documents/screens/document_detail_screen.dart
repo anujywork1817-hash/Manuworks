@@ -5,6 +5,7 @@ import 'package:go_router/go_router.dart';
 import '../../../core/theme/app_theme.dart';
 import '../providers/document_provider.dart';
 import '../../ai_chat/providers/ai_provider.dart';
+import '../../../core/services/usage_tracker.dart';
 import 'edit_document_screen.dart';
 
 class DocumentDetailScreen extends ConsumerStatefulWidget {
@@ -180,6 +181,7 @@ class _DocumentDetailScreenState extends ConsumerState<DocumentDetailScreen> {
           result = '';
       }
       if (mounted) setState(() { _aiResult = result; _aiLoading = false; });
+      await UsageTracker.logUsage(feature);
     } catch (e) {
       if (mounted) setState(() { _aiError = _friendlyError(e.toString()); _aiLoading = false; });
     }
@@ -195,6 +197,7 @@ class _DocumentDetailScreenState extends ConsumerState<DocumentDetailScreen> {
     try {
       final result = await ref.read(aiProvider.notifier).translateDocument(widget.documentId, language);
       if (mounted) setState(() { _aiResult = result; _aiLoading = false; });
+      await UsageTracker.logUsage('translate');
     } catch (e) {
       if (mounted) setState(() { _aiError = _friendlyError(e.toString()); _aiLoading = false; });
     }
@@ -265,7 +268,7 @@ class _DocumentDetailScreenState extends ConsumerState<DocumentDetailScreen> {
                   Row(children: [
                     Container(
                       padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
-                      decoration: BoxDecoration(
+                      decoration: const BoxDecoration(
                         color: AppColors.primaryContainer,
                         borderRadius: AppRadius.sm,
                       ),
@@ -515,11 +518,3 @@ class _AIFeatureGrid extends StatelessWidget {
     );
   }
 }
-
-
-
-
-
-
-
-

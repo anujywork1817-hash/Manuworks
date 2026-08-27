@@ -163,6 +163,18 @@ class _ProfileScreenState extends ConsumerState<ProfileScreen> {
                   },
                 ),
                 _Tile(
+                  icon: Icons.bar_chart_rounded,
+                  label: 'Dashboard',
+                  cs: cs, tt: tt,
+                  onTap: () => context.push(AppRoutes.usageDashboard),
+                ),
+                _Tile(
+                  icon: Icons.bolt_rounded,
+                  label: 'Recharge Credits',
+                  cs: cs, tt: tt,
+                  onTap: () => context.push(AppRoutes.rechargeCredits),
+                ),
+                _Tile(
                   icon: Icons.lock_outline_rounded,
                   label: 'Change Password',
                   cs: cs, tt: tt,

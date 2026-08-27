@@ -14,11 +14,10 @@ class ApiConstants {
 
   /// Absolute URL used by native builds, which have no page origin to inherit.
   //
-  // LOCAL TESTING: pointed at the dev machine's Wi-Fi LAN IP so a physical phone
-  // on the same network can reach the backend running on the PC (port 8080).
-  // Switch back to production by restoring the commented line below.
-  //static const String _nativeBaseUrl = 'http://192.168.1.40:8080/api/v1';
-  static const String _nativeBaseUrl = 'http://3.108.194.79:8080/api/v1'; // production
+  // Pointed at the LAN dev server (beellz@192.168.1.222), which runs the
+  // dockerized backend on port 8080 behind nginx.
+  static const String _nativeBaseUrl = 'http://192.168.1.222:8080/api/v1'; // dev server
+  //static const String _nativeBaseUrl = 'http://3.108.194.79:8080/api/v1'; // production
 
   /// Build-time override, for pointing any target at a different backend:
   ///   flutter build web --dart-define=API_BASE_URL=https://example.com/api/v1
@@ -299,8 +298,14 @@ class DioClient {
       dio.interceptors.add(
         PrettyDioLogger(
           requestHeader: false,
-          requestBody: true,
-          responseBody: true,
+          requestBody: false,
+          // Document responses can carry hundreds of KB of raw OCR text.
+          // Logging that on every request (especially during the 3s status
+          // polling while a large file processes) blocks the UI thread and
+          // makes the app *look* stuck loading — the bigger the file, the
+          // worse it gets. Keep response logging off; use a debugger /
+          // network inspector instead if you need to see a payload.
+          responseBody: false,
           responseHeader: false,
           error: true,
           compact: true,

@@ -9,6 +9,9 @@ import 'package:open_file/open_file.dart';
 import 'package:path_provider/path_provider.dart';
 import '../../../core/theme/app_theme.dart';
 import '../../../core/network/dio_client.dart';
+import '../../../core/services/ai_history_service.dart';
+import '../../../core/services/clipboard_helper.dart';
+import '../../../shared/widgets/feature_history_sheet.dart';
 
 class ComplaintReplyScreen extends ConsumerStatefulWidget {
   const ComplaintReplyScreen({super.key});
@@ -148,6 +151,14 @@ class _ComplaintReplyScreenState extends ConsumerState<ComplaintReplyScreen> {
               _generating = false;
             });
           }
+          try {
+            await AiHistoryService.save(
+              featureId: 'complaint_reply',
+              title: 'Complaint Reply · ${_complaintFile?.name ?? ''}',
+              subtitle: summary,
+              content: replyText,
+            );
+          } catch (_) {}
           return;
         }
 
@@ -292,6 +303,12 @@ class _ComplaintReplyScreenState extends ConsumerState<ComplaintReplyScreen> {
               fontWeight: FontWeight.bold, color: AppColors.textPrimary),
         ),
         actions: [
+          IconButton(
+            tooltip: 'Complaint reply history',
+            icon: const Icon(Icons.history_rounded, color: AppColors.textPrimary),
+            onPressed: () => showFeatureHistorySheet(
+                context, featureId: 'complaint_reply', featureLabel: 'Complaint Reply'),
+          ),
           if (_replyText != null)
             TextButton.icon(
               onPressed: _reset,
@@ -423,7 +440,7 @@ class _ComplaintReplyScreenState extends ConsumerState<ComplaintReplyScreen> {
             const SizedBox(width: 8),
             OutlinedButton.icon(
               onPressed: () {
-                Clipboard.setData(ClipboardData(text: _editCtrl.text));
+                copyToClipboard(_editCtrl.text);
                 ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
                   content: Text('Copied to clipboard'),
                   behavior: SnackBarBehavior.floating,

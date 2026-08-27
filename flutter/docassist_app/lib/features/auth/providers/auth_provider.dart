@@ -18,6 +18,21 @@ final currentUserProvider = FutureProvider<Map<String, String?>>((ref) async {
   return await TokenStorage.getUserInfo();
 });
 
+// ─── Credits Provider ─────────────────────────────────────────────────────────
+// Real credit balance from the backend (/auth/me). Recharge Credits invalidates
+// this after a successful purchase so every screen watching it — e.g. the
+// Usage Dashboard's balance — refreshes immediately, without a manual reload.
+
+final creditsProvider = FutureProvider<int>((ref) async {
+  try {
+    final response = await DioClient.get('/auth/me');
+    final credits = response['data']?['credits'];
+    return credits is int ? credits : (credits as num?)?.toInt() ?? 0;
+  } catch (_) {
+    return 0;
+  }
+});
+
 // ─── Auth Notifier ────────────────────────────────────────────────────────────
 
 class AuthNotifier extends AsyncNotifier<bool> {

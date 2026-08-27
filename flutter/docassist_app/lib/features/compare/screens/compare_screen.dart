@@ -3,6 +3,8 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../../../core/network/dio_client.dart';
 import '../../../core/theme/app_theme.dart';
 import '../../documents/providers/document_provider.dart';
+import '../../../core/services/ai_history_service.dart';
+import '../../../shared/widgets/feature_history_sheet.dart';
 
 // ─── Screen ───────────────────────────────────────────────────────────────────
 
@@ -52,6 +54,19 @@ class _CompareScreenState extends ConsumerState<CompareScreen> {
       if (mounted) {
         setState(() { _result = data; _comparing = false; });
       }
+      try {
+        final summary = data['summary'] as String? ?? '';
+        final verdict = data['verdict'] as String? ?? '';
+        await AiHistoryService.save(
+          featureId: 'compare',
+          title: 'Compare · ${_doc1!.title} vs ${_doc2!.title}',
+          subtitle: verdict,
+          content: [
+            if (summary.isNotEmpty) summary,
+            if (verdict.isNotEmpty) 'Verdict: $verdict',
+          ].join('\n\n'),
+        );
+      } catch (_) {}
     } catch (e) {
       if (mounted) {
         setState(() {
@@ -78,6 +93,12 @@ class _CompareScreenState extends ConsumerState<CompareScreen> {
         title: const Text('Document Comparison',
             style: TextStyle(fontWeight: FontWeight.bold, color: AppColors.textPrimary)),
         actions: [
+          IconButton(
+            tooltip: 'Compare history',
+            icon: const Icon(Icons.history_rounded, color: AppColors.textPrimary),
+            onPressed: () => showFeatureHistorySheet(
+                context, featureId: 'compare', featureLabel: 'Document Comparison'),
+          ),
           if (_result != null)
             TextButton.icon(
               onPressed: () => setState(() { _result = null; _doc1 = null; _doc2 = null; }),
@@ -264,9 +285,9 @@ class _CompareScreenState extends ConsumerState<CompareScreen> {
 
       // Differences list
       if (diffs.isNotEmpty) ...[
-        SliverToBoxAdapter(child: Padding(
-          padding: const EdgeInsets.fromLTRB(16, 16, 16, 8),
-          child: const Text('Differences',
+        const SliverToBoxAdapter(child: Padding(
+          padding: EdgeInsets.fromLTRB(16, 16, 16, 8),
+          child: Text('Differences',
               style: TextStyle(fontSize: 15, fontWeight: FontWeight.bold,
                   color: AppColors.textPrimary)),
         )),

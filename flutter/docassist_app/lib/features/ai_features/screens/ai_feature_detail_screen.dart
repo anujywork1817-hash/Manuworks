@@ -563,8 +563,12 @@ class _AiFeatureDetailScreenState extends ConsumerState<AiFeatureDetailScreen> {
               shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
             ),
             child: _running
-                ? const SizedBox(width: 18, height: 18,
-                    child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white))
+                ? Row(mainAxisSize: MainAxisSize.min, children: [
+                    const SizedBox(width: 18, height: 18,
+                        child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white)),
+                    const SizedBox(width: 10),
+                    FunLoadingWord(style: const TextStyle(color: Colors.white, fontWeight: FontWeight.w600)),
+                  ])
                 : const Text('Submit'),
           ),
         ),

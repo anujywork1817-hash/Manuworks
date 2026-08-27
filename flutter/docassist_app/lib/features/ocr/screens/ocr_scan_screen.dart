@@ -7,6 +7,7 @@ import '../../../core/theme/app_theme.dart';
 import '../../../core/services/ai_history_service.dart';
 import '../../../core/services/clipboard_helper.dart';
 import '../../../shared/widgets/feature_history_sheet.dart';
+import '../../../shared/widgets/fun_loading_word.dart';
 
 class OcrScanScreen extends StatefulWidget {
   const OcrScanScreen({super.key});
@@ -224,8 +225,12 @@ class _OcrScanScreenState extends State<OcrScanScreen> {
             shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
           ),
           child: _scanning
-              ? const SizedBox(width: 18, height: 18,
-                  child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white))
+              ? Row(mainAxisSize: MainAxisSize.min, children: [
+                  const SizedBox(width: 18, height: 18,
+                      child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white)),
+                  const SizedBox(width: 10),
+                  FunLoadingWord(style: const TextStyle(color: Colors.white, fontWeight: FontWeight.w600)),
+                ])
               : const Text('Submit'),
         ),
       ),

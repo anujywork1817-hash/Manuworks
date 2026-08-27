@@ -13,7 +13,7 @@ import (
 // Config holds all application configuration loaded from environment variables
 type Config struct {
     Groq    GroqConfig
-    OpenAI  OpenAIConfig
+    Claude  ClaudeConfig
 	App      AppConfig
 	Postgres PostgresConfig
 	Redis    RedisConfig
@@ -26,6 +26,7 @@ type Config struct {
 	Security SecurityConfig
 	Log      LogConfig
 	Swagger  SwaggerConfig
+	Razorpay RazorpayConfig
 }
 
 type AppConfig struct {
@@ -149,6 +150,11 @@ type SwaggerConfig struct {
 	BasePath string
 }
 
+type RazorpayConfig struct {
+	KeyID     string
+	KeySecret string
+}
+
 // ============================================================
 //  Singleton
 // ============================================================
@@ -212,14 +218,18 @@ func Load() *Config {
 				}
 				return extra
 			}(),
-			Model: getStr("GROQ_MODEL", "llama-3.3-70b-versatile"),
+			Model: getStr("GROQ_MODEL", "openai/gpt-oss-120b"),
 		},
-        OpenAI: OpenAIConfig{
-            APIKey: getStr("OPENAI_API_KEY", ""),
-            Model:  getStr("OPENAI_MODEL", "gpt-4o-mini"),
+        Claude: ClaudeConfig{
+            APIKey: getStr("ANTHROPIC_API_KEY", ""),
+            Model:  getStr("CLAUDE_MODEL", "claude-opus-5"),
         },
         Gemini: GeminiConfig{
-			APIKey:              getStrRequired("GEMINI_API_KEY"),
+			// Optional for local/dev runs with only a Groq key configured —
+			// Gemini-backed features (semantic search, embeddings) are
+			// skipped at startup instead of the app refusing to boot when
+			// this is blank.
+			APIKey:              getStr("GEMINI_API_KEY", ""),
 			Model:               getStr("GEMINI_MODEL", "gemini-1.5-flash"),
 			ProModel:            getStr("GEMINI_PRO_MODEL", "gemini-1.5-pro"),
 			EmbeddingModel:      getStr("GEMINI_EMBEDDING_MODEL", "text-embedding-004"),
@@ -283,6 +293,11 @@ func Load() *Config {
 			Enabled:  getBool("SWAGGER_ENABLED", true),
 			Host:     getStr("SWAGGER_HOST", "localhost:8080"),
 			BasePath: getStr("SWAGGER_BASE_PATH", "/api/v1"),
+		},
+
+		Razorpay: RazorpayConfig{
+			KeyID:     getStr("RAZORPAY_KEY_ID", ""),
+			KeySecret: getStr("RAZORPAY_KEY_SECRET", ""),
 		},
 	}
 
@@ -411,10 +426,9 @@ type GroqConfig struct {
     Model   string
 }
 
-// OpenAIConfig holds the primary AI provider's settings. Groq (above) is
-// used as the automatic fallback whenever OpenAI is unset or rate-limited.
-type OpenAIConfig struct {
+// ClaudeConfig holds the primary AI provider's settings. Groq (above) is
+// used as the automatic fallback whenever Claude is unset or rate-limited.
+type ClaudeConfig struct {
     APIKey string
     Model  string
 }
-

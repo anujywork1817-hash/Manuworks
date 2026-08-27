@@ -72,6 +72,7 @@ func (r *authRepository) GetUserByID(ctx context.Context, id string) (*model.Use
 	var user model.User
 	result := r.db.WithContext(ctx).
 		Preload("Role").
+		Preload("Settings").
 		Where("id = ? AND deleted_at IS NULL", id).
 		First(&user)
 	if result.Error != nil {
@@ -87,6 +88,7 @@ func (r *authRepository) GetUserByEmail(ctx context.Context, email string) (*mod
 	var user model.User
 	result := r.db.WithContext(ctx).
 		Preload("Role").
+		Preload("Settings").
 		Where("email = ? AND deleted_at IS NULL", email).
 		First(&user)
 	if result.Error != nil {

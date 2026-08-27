@@ -117,7 +117,7 @@ func (s *Service) extractFromPDFWithPages(ctx context.Context, pdfPath, lang str
 	if len(pages) == 0 {
 		// Last resort: some "image-only" PDFs still carry a thin text layer that
 		// pdftotext can pull out even when no renderer could rasterise a page.
-		if text, terr := extractDigitalPDFText(pdfPath); terr == nil && len(strings.TrimSpace(text)) > 10 {
+		if text, terr := extractDigitalPDFText(ctx, pdfPath); terr == nil && len(strings.TrimSpace(text)) > 10 {
 			logger.Info("pdftotext last-resort succeeded after all renderers produced no images")
 			cleaned := cleanText(text)
 			return &ExtractResult{
@@ -525,7 +525,7 @@ func (s *Service) extractText(ctx context.Context, filePath, lang string, maxPag
 		return s.ExtractFromDOCX(ctx, filePath)
 	case "pdf":
 		// Try digital text extraction first — instant, language-agnostic.
-		if text, err := extractDigitalPDFText(filePath); err == nil && len(strings.TrimSpace(text)) > 30 {
+		if text, err := extractDigitalPDFText(ctx, filePath); err == nil && len(strings.TrimSpace(text)) > 30 {
 			wc := countWords(text)
 			logger.Info("Digital PDF text extracted (no OCR needed)",
 				logger.Int("chars", len(text)),
@@ -552,20 +552,30 @@ func (s *Service) extractText(ctx context.Context, filePath, lang string, maxPag
 	}
 }
 
+// digitalPDFTextTimeout bounds each pdftotext pass. Plain text extraction
+// should always be near-instant — a hang here (malformed/huge/adversarial
+// PDF) previously blocked document processing forever with no timeout and
+// no error, leaving the document stuck in "processing" indefinitely.
+const digitalPDFTextTimeout = 30 * time.Second
+
 // extractDigitalPDFText tries to extract selectable text from a PDF (not scanned).
 // Uses pdftotext from poppler-utils.
 // IMPORTANT: try WITHOUT -layout first — the -layout flag preserves visual spacing
 // but corrupts complex scripts like Devanagari (Marathi/Hindi), returning near-empty
 // output and causing a needless fall-through to slow Tesseract OCR.
-func extractDigitalPDFText(filePath string) (string, error) {
+func extractDigitalPDFText(ctx context.Context, filePath string) (string, error) {
 	// Pass 1: plain extraction — correct for all scripts including Devanagari.
-	if out, err := exec.Command("pdftotext", filePath, "-").Output(); err == nil {
+	pass1Ctx, cancel1 := context.WithTimeout(ctx, digitalPDFTextTimeout)
+	defer cancel1()
+	if out, err := exec.CommandContext(pass1Ctx, "pdftotext", filePath, "-").Output(); err == nil {
 		if text := strings.TrimSpace(string(out)); len(text) > 30 {
 			return text, nil
 		}
 	}
 	// Pass 2: layout mode — better for columnar/tabular Latin-script PDFs.
-	out, err := exec.Command("pdftotext", "-layout", filePath, "-").Output()
+	pass2Ctx, cancel2 := context.WithTimeout(ctx, digitalPDFTextTimeout)
+	defer cancel2()
+	out, err := exec.CommandContext(pass2Ctx, "pdftotext", "-layout", filePath, "-").Output()
 	if err != nil {
 		return "", err
 	}

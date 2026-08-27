@@ -131,6 +131,7 @@ type UserSettings struct {
 	AIDefaultModel     string    `gorm:"size:50;default:'gemini-1.5-flash'"             json:"ai_default_model"`
 	StorageUsedBytes   int64     `gorm:"default:0"                                      json:"storage_used_bytes"`
 	StorageLimitBytes  int64     `gorm:"default:5368709120"                             json:"storage_limit_bytes"` // 5 GB
+	Credits            int64     `gorm:"default:0"                                      json:"credits"`
 	CreatedAt          time.Time `json:"created_at"`
 	UpdatedAt          time.Time `json:"updated_at"`
 }
@@ -195,6 +196,7 @@ type UserInfo struct {
 	IsEmailVerified bool       `json:"is_email_verified"`
 	LastLoginAt     *time.Time `json:"last_login_at,omitempty"`
 	CreatedAt       time.Time  `json:"created_at"`
+	Credits         int64      `json:"credits"`
 }
 
 // ToUserInfo converts a User model to a safe, serialisable UserInfo response.
@@ -212,6 +214,9 @@ func ToUserInfo(u *User) UserInfo {
 	}
 	if u.Role.Name != "" {
 		info.Role = u.Role.Name
+	}
+	if u.Settings != nil {
+		info.Credits = u.Settings.Credits
 	}
 	return info
 }

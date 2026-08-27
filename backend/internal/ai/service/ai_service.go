@@ -5,10 +5,13 @@ import (
 	"fmt"
 	"os"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/google/uuid"
 
+	chatModel "github.com/yourusername/docassist/internal/chat/model"
+	chatRepo "github.com/yourusername/docassist/internal/chat/repository"
 	docModel "github.com/yourusername/docassist/internal/document/model"
 	docRepo "github.com/yourusername/docassist/internal/document/repository"
 	"github.com/yourusername/docassist/pkg/gemini"
@@ -95,6 +98,18 @@ type AIService interface {
 	CompareDocuments(ctx context.Context, userID, docID1, docID2 uuid.UUID) (*groq.CompareResponse, error)
 	HelpChat(ctx context.Context, history []groq.ChatMessage, message string) (string, error)
 	GenerateComplaintReply(ctx context.Context, userID uuid.UUID, complaintText, existingReplyText string) (*ComplaintReplyResult, error)
+
+	// SummarizeText cleans up / summarizes raw text (e.g. from OCR) directly,
+	// without needing a document to already be saved+processed in the DB.
+	SummarizeText(ctx context.Context, text string) (*groq.SummaryResponse, error)
+
+	// Chat history — persisted sessions so a conversation can be resumed
+	// later instead of vanishing when the screen closes.
+	StartChatSession(ctx context.Context, userID, docID uuid.UUID, message string) (*ChatResponse, error)
+	SendChatMessage(ctx context.Context, userID, sessionID uuid.UUID, message string) (*ChatResponse, error)
+	ListChatSessions(ctx context.Context, userID uuid.UUID, docID *uuid.UUID) ([]chatModel.SessionSummary, error)
+	GetChatMessages(ctx context.Context, userID, sessionID uuid.UUID) ([]chatModel.ChatMessage, error)
+	DeleteChatSession(ctx context.Context, userID, sessionID uuid.UUID) error
 }
 
 // ─── Implementation ───────────────────────────────────────────────────────────
@@ -105,6 +120,7 @@ type aiService struct {
 	groqClient *groq.Client
 	qdrantClient *qdrant.Client
 	ocrService   *ocr.Service
+	chatRepo     chatRepo.ChatRepository
 }
 
 func NewAIService(
@@ -113,6 +129,7 @@ func NewAIService(
     groqClient *groq.Client,
 	qdrantClient *qdrant.Client,
 	ocrService *ocr.Service,
+	chatRepository chatRepo.ChatRepository,
 ) AIService {
 	return &aiService{
         docRepo:      docRepo,
@@ -120,6 +137,7 @@ func NewAIService(
         groqClient:   groqClient,
 		qdrantClient: qdrantClient,
 		ocrService:   ocrService,
+		chatRepo:     chatRepository,
 	}
 }
 
@@ -308,12 +326,26 @@ func (s *aiService) ProcessDocument(ctx context.Context, userID, docID uuid.UUID
 		_ = s.docRepo.MarkDocumentEmbedded(ctx, docID)
 	}
 
-	// 8. Pre-compute AI features and cache them so feature taps return instantly
-	summaryRes, _ := s.groqClient.Summarize(ctx, truncate(extractedText, 15000))
-	keyPointsRes, _ := s.groqClient.ExtractKeyPoints(ctx, truncate(extractedText, 12000))
-	timelineRes, _ := s.groqClient.ExtractTimeline(ctx, truncate(extractedText, 15000))
-	actionRes, _ := s.groqClient.ExtractActionItems(ctx, truncate(extractedText, 12000))
-	analysisRes, _ := s.groqClient.AnalyzeDocument(ctx, truncate(extractedText, 12000))
+	// 8. Pre-compute AI features and cache them so feature taps return instantly.
+	// These 5 calls are independent — run them concurrently instead of one
+	// after another. Sequential was fine when each call was near-instant
+	// (Groq), but now that Claude is primary and each call can take several
+	// seconds, five in a row added up to a very slow upload-to-ready time.
+	var (
+		summaryRes   *groq.SummaryResponse
+		keyPointsRes *groq.KeyPointsResponse
+		timelineRes  *groq.TimelineResponse
+		actionRes    *groq.ActionItemsResponse
+		analysisRes  *groq.AnalysisResponse
+		aiWG         sync.WaitGroup
+	)
+	aiWG.Add(5)
+	go func() { defer aiWG.Done(); summaryRes, _ = s.groqClient.Summarize(ctx, truncate(extractedText, 15000)) }()
+	go func() { defer aiWG.Done(); keyPointsRes, _ = s.groqClient.ExtractKeyPoints(ctx, truncate(extractedText, 12000)) }()
+	go func() { defer aiWG.Done(); timelineRes, _ = s.groqClient.ExtractTimeline(ctx, truncate(extractedText, 15000)) }()
+	go func() { defer aiWG.Done(); actionRes, _ = s.groqClient.ExtractActionItems(ctx, truncate(extractedText, 12000)) }()
+	go func() { defer aiWG.Done(); analysisRes, _ = s.groqClient.AnalyzeDocument(ctx, truncate(extractedText, 12000)) }()
+	aiWG.Wait()
 
 	var (
 		cachedSummary     string
@@ -389,6 +421,17 @@ func (s *aiService) Summarize(ctx context.Context, userID, docID uuid.UUID) (*gr
 	return s.groqClient.Summarize(ctx, truncate(doc.OcrText, 15000))
 }
 
+// SummarizeText summarizes raw text directly (used for OCR results that
+// aren't tied to a saved document) instead of returning the raw, often
+// messy/garbled OCR output straight to the user.
+func (s *aiService) SummarizeText(ctx context.Context, text string) (*groq.SummaryResponse, error) {
+	text = strings.TrimSpace(text)
+	if text == "" {
+		return &groq.SummaryResponse{Summary: "", KeyPoints: []string{}, WordCount: 0}, nil
+	}
+	return s.groqClient.Summarize(ctx, truncate(text, 15000))
+}
+
 func (s *aiService) AnswerQuestion(ctx context.Context, userID, docID uuid.UUID, question string) (*groq.QAResponse, error) {
 	// Use RAG: find the most relevant chunks first, then send only those to Gemini
 	// This is more accurate and uses fewer tokens than sending the whole document
@@ -439,11 +482,124 @@ func (s *aiService) Chat(ctx context.Context, userID, docID uuid.UUID, req ChatR
 		return nil, err
 	}
 
-	return &ChatResponse{
+	return &ChatResponse{ // legacy, unused by handlers now — kept to avoid an unrelated interface change
 		Answer:    answer,
 		SessionID: req.DocumentID,
 		CreatedAt: time.Now(),
 	}, nil
+}
+
+// ─── Chat History (persisted sessions) ────────────────────────────────────────
+
+// docChatContext finds the document context relevant to message — same RAG
+// lookup [Chat] uses, factored out so the session-backed methods below share it.
+func (s *aiService) docChatContext(ctx context.Context, userID, docID uuid.UUID, message string) (string, error) {
+	relevant, err := s.retrieveRelevantChunks(ctx, docID, userID, message, 5)
+	if err != nil || len(relevant) == 0 {
+		return s.getDocumentText(ctx, userID, docID, 12000)
+	}
+	var sb strings.Builder
+	for _, chunk := range relevant {
+		sb.WriteString(chunk.Content)
+		sb.WriteString("\n\n")
+	}
+	return sb.String(), nil
+}
+
+// titleFromMessage derives a short session title from the first message,
+// the way most chat apps do, so the History list shows something readable
+// instead of a bare timestamp.
+func titleFromMessage(message string) string {
+	t := strings.TrimSpace(message)
+	if len(t) > 60 {
+		t = strings.TrimSpace(t[:60]) + "…"
+	}
+	if t == "" {
+		t = "New chat"
+	}
+	return t
+}
+
+// StartChatSession creates a new persisted conversation for a document,
+// answers the first message, and stores both turns. Used by "New Chat".
+func (s *aiService) StartChatSession(ctx context.Context, userID, docID uuid.UUID, message string) (*ChatResponse, error) {
+	contextText, err := s.docChatContext(ctx, userID, docID, message)
+	if err != nil {
+		return nil, err
+	}
+	answer, err := s.groqClient.Chat(ctx, contextText, nil, message)
+	if err != nil {
+		return nil, err
+	}
+
+	session := &chatModel.ChatSession{
+		UserID:     userID,
+		DocumentID: docID,
+		Title:      titleFromMessage(message),
+	}
+	if err := s.chatRepo.CreateSession(ctx, session); err != nil {
+		return nil, fmt.Errorf("create chat session: %w", err)
+	}
+	now := time.Now()
+	_ = s.chatRepo.AddMessage(ctx, &chatModel.ChatMessage{SessionID: session.ID, Role: "user", Content: message, CreatedAt: now})
+	_ = s.chatRepo.AddMessage(ctx, &chatModel.ChatMessage{SessionID: session.ID, Role: "assistant", Content: answer, CreatedAt: now})
+
+	return &ChatResponse{Answer: answer, SessionID: session.ID.String(), CreatedAt: now}, nil
+}
+
+// SendChatMessage continues an existing session: loads its stored history
+// for conversational context, answers, and persists both new turns.
+func (s *aiService) SendChatMessage(ctx context.Context, userID, sessionID uuid.UUID, message string) (*ChatResponse, error) {
+	session, err := s.chatRepo.GetSession(ctx, sessionID, userID)
+	if err != nil {
+		return nil, err
+	}
+
+	contextText, err := s.docChatContext(ctx, userID, session.DocumentID, message)
+	if err != nil {
+		return nil, err
+	}
+
+	stored, err := s.chatRepo.GetMessages(ctx, sessionID)
+	if err != nil {
+		return nil, fmt.Errorf("load chat history: %w", err)
+	}
+	history := make([]groq.ChatMessage, 0, len(stored))
+	for _, m := range stored {
+		history = append(history, groq.ChatMessage{Role: m.Role, Content: m.Content})
+	}
+
+	answer, err := s.groqClient.Chat(ctx, contextText, history, message)
+	if err != nil {
+		return nil, err
+	}
+
+	now := time.Now()
+	_ = s.chatRepo.AddMessage(ctx, &chatModel.ChatMessage{SessionID: sessionID, Role: "user", Content: message, CreatedAt: now})
+	_ = s.chatRepo.AddMessage(ctx, &chatModel.ChatMessage{SessionID: sessionID, Role: "assistant", Content: answer, CreatedAt: now})
+	_ = s.chatRepo.TouchSession(ctx, sessionID)
+
+	return &ChatResponse{Answer: answer, SessionID: sessionID.String(), CreatedAt: now}, nil
+}
+
+// ListChatSessions lists a user's chat sessions, optionally scoped to one
+// document — powers the History panel.
+func (s *aiService) ListChatSessions(ctx context.Context, userID uuid.UUID, docID *uuid.UUID) ([]chatModel.SessionSummary, error) {
+	return s.chatRepo.ListSessions(ctx, userID, docID)
+}
+
+// GetChatMessages returns the full message log for one session — used both
+// by the History detail preview and to resume a conversation on-screen.
+func (s *aiService) GetChatMessages(ctx context.Context, userID, sessionID uuid.UUID) ([]chatModel.ChatMessage, error) {
+	if _, err := s.chatRepo.GetSession(ctx, sessionID, userID); err != nil {
+		return nil, err
+	}
+	return s.chatRepo.GetMessages(ctx, sessionID)
+}
+
+// DeleteChatSession removes a session and its messages permanently.
+func (s *aiService) DeleteChatSession(ctx context.Context, userID, sessionID uuid.UUID) error {
+	return s.chatRepo.DeleteSession(ctx, sessionID, userID)
 }
 
 func (s *aiService) ExtractKeyPoints(ctx context.Context, userID, docID uuid.UUID) ([]string, error) {
@@ -630,6 +786,9 @@ func (s *aiService) getDocumentText(ctx context.Context, userID, docID uuid.UUID
 // retrieveRelevantChunks uses RAG to find the most semantically similar
 // chunks to the query. Falls back gracefully if embedding fails.
 func (s *aiService) retrieveRelevantChunks(ctx context.Context, docID, userID uuid.UUID, query string, limit int) ([]qdrant.SearchResult, error) {
+	if s.geminiClient == nil {
+		return nil, fmt.Errorf("query embedding: Gemini is not configured (GEMINI_API_KEY not set)")
+	}
 	// Generate embedding for the query
 	embedding, err := s.geminiClient.GenerateEmbedding(ctx, query)
 	if err != nil {
@@ -808,4 +967,3 @@ func (s *aiService) DraftDocument(ctx context.Context, userID uuid.UUID, docType
 func indiaOCRLang(docLang string) string {
 	return ocr.LangToTess(docLang)
 }
-

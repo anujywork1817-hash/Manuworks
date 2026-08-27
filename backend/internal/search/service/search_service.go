@@ -51,6 +51,9 @@ func (s *SearchService) Search(ctx context.Context, userID, query string, limit 
 	if limit <= 0 || limit > 20 {
 		limit = 10
 	}
+	if s.geminiClient == nil {
+		return nil, fmt.Errorf("semantic search unavailable: Gemini is not configured (GEMINI_API_KEY not set)")
+	}
 	embResp, err := s.geminiClient.GenerateEmbedding(ctx, query)
 	if err != nil {
 		return nil, fmt.Errorf("failed to embed query: %w", err)
@@ -81,6 +84,9 @@ func (s *SearchService) SearchInDocument(ctx context.Context, userID, documentID
 	if count == 0 {
 		return nil, fmt.Errorf("document not found or access denied")
 	}
+	if s.geminiClient == nil {
+		return nil, fmt.Errorf("semantic search unavailable: Gemini is not configured (GEMINI_API_KEY not set)")
+	}
 	embResp, err := s.geminiClient.GenerateEmbedding(ctx, query)
 	if err != nil {
 		return nil, fmt.Errorf("failed to embed query: %w", err)
@@ -101,6 +107,9 @@ func (s *SearchService) SearchInDocument(ctx context.Context, userID, documentID
 }
 
 func (s *SearchService) RAGQuery(ctx context.Context, userID, query string) (*RAGResponse, error) {
+	if s.geminiClient == nil {
+		return nil, fmt.Errorf("RAG query unavailable: Gemini is not configured (GEMINI_API_KEY not set)")
+	}
 	embResp, err := s.geminiClient.GenerateEmbedding(ctx, query)
 	if err != nil {
 		return nil, fmt.Errorf("failed to embed query: %w", err)
@@ -179,4 +188,3 @@ func (s *SearchService) enrichResults(ctx context.Context, hits []qdrant.SearchR
 	}
 	return results, nil
 }
-

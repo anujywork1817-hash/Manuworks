@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net"
@@ -14,14 +15,16 @@ import (
 	"sync"
 	"time"
 
+	"github.com/anthropics/anthropic-sdk-go"
+	"github.com/anthropics/anthropic-sdk-go/option"
+
 	"github.com/yourusername/docassist/pkg/logger"
 )
 
 const (
 	baseURL            = "https://api.groq.com/openai/v1/chat/completions"
-	openAIBaseURL      = "https://api.openai.com/v1/chat/completions"
 	defaultModel       = "llama-3.1-8b-instant" // 500K TPD vs 100K for 70b-versatile
-	defaultOpenAIModel = "gpt-4o-mini"
+	defaultClaudeModel = "claude-opus-5"
 	defaultTimeout     = 60 * time.Second
 
 	// indiaDocEngRule is appended to every document-analysis system prompt so
@@ -36,9 +39,9 @@ type groqKeySlot struct {
 	cooldownUntil time.Time
 }
 
-// Client talks to OpenAI (primary) and Groq (secondary/fallback). Every
-// public method tries OpenAI first; if OpenAI is unset, rate-limited, or
-// out of quota, it transparently falls back to Groq until OpenAI's limit
+// Client talks to Claude (primary) and Groq (secondary/fallback). Every
+// public method tries Claude first; if Claude is unset, rate-limited, or
+// out of quota, it transparently falls back to Groq until Claude's limit
 // is expected to have reset.
 //
 // Multiple Groq keys are supported. When one key exhausts its daily token
@@ -49,22 +52,23 @@ type Client struct {
 	model      string
 	httpClient *http.Client
 
-	openAIAPIKey string
-	openAIModel  string
+	claudeClient *anthropic.Client
+	claudeModel  string
+	claudeOn     bool
 
 	mu                  sync.Mutex
-	openAICooldownUntil time.Time
+	claudeCooldownUntil time.Time
 }
 
-// Config holds Groq + OpenAI configuration
+// Config holds Groq + Claude configuration
 type Config struct {
 	APIKey  string   // Primary Groq API key
 	APIKeys []string // Additional Groq keys for rotation (GROQ_API_KEY_2 … _5)
 	Model   string
 	Timeout time.Duration
 
-	OpenAIAPIKey string
-	OpenAIModel  string
+	ClaudeAPIKey string
+	ClaudeModel  string
 }
 
 // --- Request/Response types ---
@@ -165,9 +169,9 @@ func NewClient(cfg *Config) *Client {
 	if model == "" {
 		model = defaultModel
 	}
-	openAIModel := cfg.OpenAIModel
-	if openAIModel == "" {
-		openAIModel = defaultOpenAIModel
+	claudeModel := cfg.ClaudeModel
+	if claudeModel == "" {
+		claudeModel = defaultClaudeModel
 	}
 	timeout := cfg.Timeout
 	if timeout == 0 {
@@ -190,11 +194,18 @@ func NewClient(cfg *Config) *Client {
 			return (&net.Dialer{Timeout: 30 * time.Second, KeepAlive: 30 * time.Second}).DialContext(ctx, "tcp4", addr)
 		},
 	}
+	var claudeClient *anthropic.Client
+	if cfg.ClaudeAPIKey != "" {
+		cc := anthropic.NewClient(option.WithAPIKey(cfg.ClaudeAPIKey))
+		claudeClient = &cc
+	}
+
 	return &Client{
 		groqKeys:     slots,
 		model:        model,
-		openAIAPIKey: cfg.OpenAIAPIKey,
-		openAIModel:  openAIModel,
+		claudeClient: claudeClient,
+		claudeModel:  claudeModel,
+		claudeOn:     cfg.ClaudeAPIKey != "",
 		httpClient:   &http.Client{Timeout: timeout, Transport: transport},
 	}
 }
@@ -222,24 +233,24 @@ func (c *Client) cooldownGroqKey(i int, until time.Time) {
 	}
 }
 
-// openAIAvailable reports whether OpenAI is configured and not currently
+// claudeAvailable reports whether Claude is configured and not currently
 // in a rate-limit cooldown.
-func (c *Client) openAIAvailable() bool {
-	if c.openAIAPIKey == "" {
+func (c *Client) claudeAvailable() bool {
+	if !c.claudeOn {
 		return false
 	}
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	return time.Now().After(c.openAICooldownUntil)
+	return time.Now().After(c.claudeCooldownUntil)
 }
 
-// setOpenAICooldown skips OpenAI for the given duration, e.g. after it
+// setClaudeCooldown skips Claude for the given duration, e.g. after it
 // returns a rate-limit/quota error, so subsequent calls go straight to
-// Groq instead of failing against OpenAI first every time.
-func (c *Client) setOpenAICooldown(d time.Duration) {
+// Groq instead of failing against Claude first every time.
+func (c *Client) setClaudeCooldown(d time.Duration) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	c.openAICooldownUntil = time.Now().Add(d)
+	c.claudeCooldownUntil = time.Now().Add(d)
 }
 
 // parseRetryAfter parses "try again in 33m14.976s" or "try again in 1.5s".
@@ -272,26 +283,26 @@ func formatWait(d time.Duration) string {
 
 // --- Core API call ---
 
-// generate tries OpenAI (primary) first, then falls back to Groq
-// (secondary) if OpenAI is unset, rate-limited, or out of quota.
+// generate tries Claude (primary) first, then falls back to Groq
+// (secondary) if Claude is unset, rate-limited, or out of quota.
 func (c *Client) generate(ctx context.Context, systemPrompt, userPrompt string, maxTokens int) (string, error) {
 	msgs := []message{
 		{Role: "system", Content: systemPrompt},
 		{Role: "user", Content: userPrompt},
 	}
 
-	if c.openAIAvailable() {
-		result, retryAfter, err := c.doRequest(ctx, openAIBaseURL, c.openAIAPIKey, c.openAIModel, msgs, maxTokens, 0.3)
+	if c.claudeAvailable() {
+		result, retryAfter, err := c.doClaudeRequest(ctx, systemPrompt, msgs, maxTokens)
 		if err == nil {
-			logger.Debug("AI request served by OpenAI")
+			logger.Debug("AI request served by Claude")
 			return result, nil
 		}
 		if retryAfter > 0 {
-			c.setOpenAICooldown(retryAfter)
-			logger.Warn("OpenAI rate-limited, switching to Groq until it resets",
+			c.setClaudeCooldown(retryAfter)
+			logger.Warn("Claude rate-limited, switching to Groq until it resets",
 				logger.Err(err), logger.Str("resume_at", time.Now().Add(retryAfter).Format(time.RFC3339)))
 		} else {
-			logger.Warn("OpenAI request failed, falling back to Groq for this request", logger.Err(err))
+			logger.Warn("Claude request failed, falling back to Groq for this request", logger.Err(err))
 		}
 		// Fall through to Groq for this request.
 	}
@@ -343,10 +354,61 @@ func (c *Client) generateGroq(ctx context.Context, msgs []message, maxTokens int
 	return "", fmt.Errorf("AI service is busy, please try again in a moment.")
 }
 
+// doClaudeRequest performs a single Messages API call against Claude via the
+// official Anthropic SDK. systemPrompt is sent as the top-level system
+// field; msgs[1:] (skipping the leading system-role entry callers build for
+// the Groq/OpenAI-style message list) becomes the conversation turns. The
+// returned duration is non-zero only when Claude signalled a rate limit,
+// so callers know how long to skip Claude and use Groq instead.
+func (c *Client) doClaudeRequest(ctx context.Context, systemPrompt string, msgs []message, maxTokens int) (string, time.Duration, error) {
+	var turns []anthropic.MessageParam
+	for _, m := range msgs {
+		if m.Role == "system" {
+			continue
+		}
+		block := anthropic.NewTextBlock(m.Content)
+		if m.Role == "assistant" {
+			turns = append(turns, anthropic.NewAssistantMessage(block))
+		} else {
+			turns = append(turns, anthropic.NewUserMessage(block))
+		}
+	}
+
+	resp, err := c.claudeClient.Messages.New(ctx, anthropic.MessageNewParams{
+		Model:     anthropic.Model(c.claudeModel),
+		MaxTokens: int64(maxTokens),
+		System:    []anthropic.TextBlockParam{{Text: systemPrompt}},
+		Messages:  turns,
+		// These are short, formulaic extraction/summarization calls, not hard
+		// reasoning tasks — low effort keeps adaptive thinking on (avoiding the
+		// tool-call-leaks-into-text failure mode of disabling it outright) while
+		// cutting latency substantially versus the "high" default.
+		OutputConfig: anthropic.OutputConfigParam{Effort: anthropic.OutputConfigEffortLow},
+	})
+	if err != nil {
+		var apiErr *anthropic.Error
+		if errors.As(err, &apiErr) && apiErr.StatusCode == 429 {
+			return "", 60 * time.Second, fmt.Errorf("claude rate limit: %w", err)
+		}
+		return "", 0, fmt.Errorf("claude request: %w", err)
+	}
+
+	var text strings.Builder
+	for _, block := range resp.Content {
+		if tb, ok := block.AsAny().(anthropic.TextBlock); ok {
+			text.WriteString(tb.Text)
+		}
+	}
+	if text.Len() == 0 {
+		return "", 0, fmt.Errorf("claude: empty response")
+	}
+	return text.String(), 0, nil
+}
+
 // doRequest performs a single chat-completion call against the given
-// provider endpoint. The returned duration is non-zero only when the
+// provider endpoint (Groq). The returned duration is non-zero only when the
 // provider signalled a rate limit (HTTP 429), so callers know how long to
-// back off (Groq) or how long to skip this provider entirely (OpenAI).
+// back off before retrying.
 func (c *Client) doRequest(ctx context.Context, url, apiKey, model string, msgs []message, maxTokens int, temperature float64) (string, time.Duration, error) {
 	reqBody := chatRequest{
 		Model:       model,
@@ -406,20 +468,24 @@ func (c *Client) doRequest(ctx context.Context, url, apiKey, model string, msgs 
 
 // chatCompletion is like generate but for callers that build their own
 // full message list (Chat, HelpChat) instead of a single system+user pair.
-// Same OpenAI-first, Groq-fallback behavior, single attempt on each side.
+// Same Claude-first, Groq-fallback behavior, single attempt on each side.
 func (c *Client) chatCompletion(ctx context.Context, msgs []message, maxTokens int, temperature float64) (string, error) {
-	if c.openAIAvailable() {
-		result, retryAfter, err := c.doRequest(ctx, openAIBaseURL, c.openAIAPIKey, c.openAIModel, msgs, maxTokens, temperature)
+	if c.claudeAvailable() {
+		systemPrompt := ""
+		if len(msgs) > 0 && msgs[0].Role == "system" {
+			systemPrompt = msgs[0].Content
+		}
+		result, retryAfter, err := c.doClaudeRequest(ctx, systemPrompt, msgs, maxTokens)
 		if err == nil {
-			logger.Debug("AI request served by OpenAI")
+			logger.Debug("AI request served by Claude")
 			return result, nil
 		}
 		if retryAfter > 0 {
-			c.setOpenAICooldown(retryAfter)
-			logger.Warn("OpenAI rate-limited, switching to Groq until it resets",
+			c.setClaudeCooldown(retryAfter)
+			logger.Warn("Claude rate-limited, switching to Groq until it resets",
 				logger.Err(err), logger.Str("resume_at", time.Now().Add(retryAfter).Format(time.RFC3339)))
 		} else {
-			logger.Warn("OpenAI request failed, falling back to Groq for this request", logger.Err(err))
+			logger.Warn("Claude request failed, falling back to Groq for this request", logger.Err(err))
 		}
 	}
 	key, _ := c.activeGroqKey()

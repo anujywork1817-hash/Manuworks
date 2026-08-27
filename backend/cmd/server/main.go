@@ -22,6 +22,8 @@ import (
 	aiHandler "github.com/yourusername/docassist/internal/ai/handler"
 	aiService "github.com/yourusername/docassist/internal/ai/service"
 	authHandler "github.com/yourusername/docassist/internal/auth/handler"
+	chatModel "github.com/yourusername/docassist/internal/chat/model"
+	chatRepo "github.com/yourusername/docassist/internal/chat/repository"
 	authModel "github.com/yourusername/docassist/internal/auth/model"
 	authRepo "github.com/yourusername/docassist/internal/auth/repository"
 	authService "github.com/yourusername/docassist/internal/auth/service"
@@ -33,6 +35,10 @@ import (
 	matterModel "github.com/yourusername/docassist/internal/matter/model"
 	matterRepo "github.com/yourusername/docassist/internal/matter/repository"
 	matterService "github.com/yourusername/docassist/internal/matter/service"
+	paymentHandler "github.com/yourusername/docassist/internal/payment/handler"
+	paymentModel "github.com/yourusername/docassist/internal/payment/model"
+	paymentRepo "github.com/yourusername/docassist/internal/payment/repository"
+	paymentService "github.com/yourusername/docassist/internal/payment/service"
 	searchHandler "github.com/yourusername/docassist/internal/search/handler"
 	searchService "github.com/yourusername/docassist/internal/search/service"
 	"github.com/yourusername/docassist/pkg/database"
@@ -42,6 +48,7 @@ import (
 	"github.com/yourusername/docassist/pkg/middleware"
 	"github.com/yourusername/docassist/pkg/ocr"
 	"github.com/yourusername/docassist/pkg/qdrant"
+	"github.com/yourusername/docassist/pkg/razorpay"
 )
 
 // @title           DocAssist API
@@ -108,6 +115,9 @@ func main() {
 		&docModel.DocumentChunk{},
 		&matterModel.Matter{},
 		&matterModel.MatterDocument{},
+		&paymentModel.Order{},
+		&chatModel.ChatSession{},
+		&chatModel.ChatMessage{},
 	); err != nil {
 		logger.Fatal("AutoMigrate failed", logger.Err(err))
 	}
@@ -163,6 +173,8 @@ func main() {
 	authRepository := authRepo.NewAuthRepository(db)
 	documentRepository := docRepo.NewDocumentRepository(db)
 	matterRepository := matterRepo.NewMatterRepository(db)
+	paymentRepository := paymentRepo.NewPaymentRepository(db)
+	chatRepository := chatRepo.NewChatRepository(db)
 
 	// ─── 11. Wire services ───────────────────────────────────────────────────────
 	authSvc := authService.New(authRepository, cfg, nil)
@@ -171,17 +183,19 @@ func main() {
 		APIKey:       cfg.Groq.APIKey,
 		APIKeys:      cfg.Groq.APIKeys, // GROQ_API_KEY_2 … _5 for key rotation
 		Model:        cfg.Groq.Model,
-		OpenAIAPIKey: cfg.OpenAI.APIKey,
-		OpenAIModel:  cfg.OpenAI.Model,
+		ClaudeAPIKey: cfg.Claude.APIKey,
+		ClaudeModel:  cfg.Claude.Model,
 	})
-	if cfg.OpenAI.APIKey != "" {
-		logger.Info("OpenAI configured as primary AI provider, Groq as fallback")
+	if cfg.Claude.APIKey != "" {
+		logger.Info("Claude configured as primary AI provider, Groq as fallback")
 	} else {
-		logger.Info("OPENAI_API_KEY not set — using Groq as the AI provider")
+		logger.Info("ANTHROPIC_API_KEY not set — using Groq as the AI provider")
 	}
-    aiSvc := aiService.NewAIService(documentRepository, geminiClient, groqClient, qdrantClient, ocrService)
+    aiSvc := aiService.NewAIService(documentRepository, geminiClient, groqClient, qdrantClient, ocrService, chatRepository)
 	searchSvc := searchService.NewSearchService(db, geminiClient, qdrantClient)
 	matterSvc := matterService.NewMatterService(matterRepository)
+	rzpClient := razorpay.NewClient(cfg.Razorpay.KeyID, cfg.Razorpay.KeySecret)
+	paymentSvc := paymentService.NewPaymentService(paymentRepository, rzpClient, cfg.Razorpay.KeyID)
 
 	// ─── 12. Wire handlers ───────────────────────────────────────────────────────
 	authH := authHandler.New(authSvc)
@@ -189,6 +203,7 @@ func main() {
 	aiH := aiHandler.NewAIHandler(aiSvc, ocrService)
 	searchH := searchHandler.NewSearchHandler(searchSvc)
 	matterH := matterHandler.NewMatterHandler(matterSvc, documentRepository)
+	paymentH := paymentHandler.NewPaymentHandler(paymentSvc)
 
 	// ─── 13. Setup Gin ───────────────────────────────────────────────────────────
 	if cfg.IsProd() {
@@ -298,8 +313,10 @@ func main() {
 
 		// Chat
 		protected.POST("/documents/:document_id/chat", aiH.StartChat)
+		protected.GET("/documents/:document_id/chat/sessions", aiH.ListChatSessions)
 		protected.POST("/chat/:session_id/message", aiH.SendMessage)
 		protected.GET("/chat/:session_id/history", aiH.GetChatHistory)
+		protected.DELETE("/chat/:session_id", aiH.DeleteChatSession)
 
 		// Semantic search + RAG
 		protected.GET("/search", searchH.Search)
@@ -316,6 +333,10 @@ func main() {
 		protected.DELETE("/matters/:matter_id", matterH.Delete)
 		protected.POST("/matters/:matter_id/documents", matterH.AddDocument)
 		protected.DELETE("/matters/:matter_id/documents/:doc_id", matterH.RemoveDocument)
+
+		// Payments (credit recharge via Razorpay)
+		protected.POST("/payments/razorpay/create-order", paymentH.CreateOrder)
+		protected.POST("/payments/razorpay/verify", paymentH.Verify)
 	}
 
 	// Admin routes — require admin role

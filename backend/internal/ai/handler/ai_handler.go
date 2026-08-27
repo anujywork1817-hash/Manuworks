@@ -334,8 +334,10 @@ func (h *AIHandler) GenerateReport(c *gin.Context) {
 	respond(c, http.StatusOK, true, "Report generated", result)
 }
 
-// StartChat answers a question about the document directly (single-shot RAG Q&A).
-// The Flutter app calls this for every message — there is no real session state.
+// StartChat begins a new persisted chat session for a document, answers the
+// first message, and stores both turns. Returns session_id so the client
+// can continue the same conversation via SendMessage, and find it again
+// later via ListChatSessions / GetChatHistory.
 func (h *AIHandler) StartChat(c *gin.Context) {
 	docID, userID, ok := parseIDs(c)
 	if !ok {
@@ -357,7 +359,7 @@ func (h *AIHandler) StartChat(c *gin.Context) {
 		return
 	}
 
-	result, err := h.aiService.Chat(c.Request.Context(), userID, docID, service.ChatRequest{Message: message})
+	result, err := h.aiService.StartChatSession(c.Request.Context(), userID, docID, message)
 	if err != nil {
 		respond(c, http.StatusInternalServerError, false, err.Error(), nil)
 		return
@@ -365,6 +367,8 @@ func (h *AIHandler) StartChat(c *gin.Context) {
 	respond(c, http.StatusOK, true, "Answer generated", result)
 }
 
+// SendMessage continues an existing session — the AI sees the session's
+// full stored history for context, and both new turns are persisted.
 func (h *AIHandler) SendMessage(c *gin.Context) {
 	userID, err := uuid.Parse(middleware.GetUserID(c))
 	if err != nil {
@@ -383,7 +387,7 @@ func (h *AIHandler) SendMessage(c *gin.Context) {
 		respond(c, http.StatusBadRequest, false, "message is required", nil)
 		return
 	}
-	result, err := h.aiService.Chat(c.Request.Context(), userID, sessionID, service.ChatRequest{Message: req.Message})
+	result, err := h.aiService.SendChatMessage(c.Request.Context(), userID, sessionID, req.Message)
 	if err != nil {
 		respond(c, http.StatusInternalServerError, false, err.Error(), nil)
 		return
@@ -391,8 +395,59 @@ func (h *AIHandler) SendMessage(c *gin.Context) {
 	respond(c, http.StatusOK, true, "Message sent", result)
 }
 
+// GetChatHistory returns the full message log for one session — used both
+// to render a History preview and to resume a conversation on-screen.
 func (h *AIHandler) GetChatHistory(c *gin.Context) {
-	respond(c, http.StatusOK, true, "Chat history retrieved", []interface{}{})
+	userID, err := uuid.Parse(middleware.GetUserID(c))
+	if err != nil {
+		respond(c, http.StatusBadRequest, false, "invalid user_id", nil)
+		return
+	}
+	sessionID, err := uuid.Parse(c.Param("session_id"))
+	if err != nil {
+		respond(c, http.StatusBadRequest, false, "invalid session_id", nil)
+		return
+	}
+	messages, err := h.aiService.GetChatMessages(c.Request.Context(), userID, sessionID)
+	if err != nil {
+		respond(c, http.StatusNotFound, false, "chat session not found", nil)
+		return
+	}
+	respond(c, http.StatusOK, true, "Chat history retrieved", messages)
+}
+
+// ListChatSessions lists a user's chat sessions for one document, newest
+// first — powers the History panel in the app.
+func (h *AIHandler) ListChatSessions(c *gin.Context) {
+	docID, userID, ok := parseIDs(c)
+	if !ok {
+		return
+	}
+	sessions, err := h.aiService.ListChatSessions(c.Request.Context(), userID, &docID)
+	if err != nil {
+		respond(c, http.StatusInternalServerError, false, err.Error(), nil)
+		return
+	}
+	respond(c, http.StatusOK, true, "Chat sessions retrieved", sessions)
+}
+
+// DeleteChatSession permanently removes a session and its messages.
+func (h *AIHandler) DeleteChatSession(c *gin.Context) {
+	userID, err := uuid.Parse(middleware.GetUserID(c))
+	if err != nil {
+		respond(c, http.StatusBadRequest, false, "invalid user_id", nil)
+		return
+	}
+	sessionID, err := uuid.Parse(c.Param("session_id"))
+	if err != nil {
+		respond(c, http.StatusBadRequest, false, "invalid session_id", nil)
+		return
+	}
+	if err := h.aiService.DeleteChatSession(c.Request.Context(), userID, sessionID); err != nil {
+		respond(c, http.StatusInternalServerError, false, err.Error(), nil)
+		return
+	}
+	respond(c, http.StatusOK, true, "Chat session deleted", nil)
 }
 
 func (h *AIHandler) GetAIUsage(c *gin.Context) {
@@ -720,8 +775,22 @@ func (h *AIHandler) ScanOCR(c *gin.Context) {
 		return
 	}
 
+	// Raw OCR output is often messy/garbled (misread characters, broken
+	// layout, no punctuation) — especially for photos of screens, diagrams,
+	// or low-quality scans. Run it through AI to produce a clean, readable
+	// summary instead of dumping the raw text on the user. If summarization
+	// fails (e.g. AI provider down) we still fall back to the raw text so
+	// the feature doesn't hard-fail.
+	summary := ""
+	if result.Text != "" {
+		if summaryRes, sumErr := h.aiService.SummarizeText(c.Request.Context(), result.Text); sumErr == nil && summaryRes != nil {
+			summary = summaryRes.Summary
+		}
+	}
+
 	respond(c, http.StatusOK, true, "OCR extraction complete", gin.H{
 		"text":       result.Text,
+		"summary":    summary,
 		"word_count": result.WordCount,
 		"page_count": result.PageCount,
 		"confidence": result.Confidence,

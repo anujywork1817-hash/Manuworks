@@ -9,6 +9,7 @@ import '../../../core/theme/app_theme.dart';
 import '../../../core/network/dio_client.dart';
 import '../providers/document_provider.dart';
 import '../providers/favourites_provider.dart';
+import '../../../shared/widgets/fun_loading_word.dart';
 
 /// Documents tab: upload a file and see your upload history. Tapping a
 /// document opens its detail screen (chat / AI features / etc. live there).
@@ -131,8 +132,7 @@ class _DocumentsScreenState extends ConsumerState<DocumentsScreen> {
             ),
             if (state.isUploading) ...[
               const SizedBox(height: AppSpacing.md),
-              Text('Uploading... ${(state.uploadProgress * 100).toInt()}%',
-                  style: theme.textTheme.bodySmall),
+              FunLoadingWord(style: theme.textTheme.bodySmall),
               const SizedBox(height: 4),
               LinearProgressIndicator(value: state.uploadProgress),
             ],

@@ -6,6 +6,7 @@ import '../../../core/theme/app_theme.dart';
 import '../../documents/providers/document_provider.dart';
 import '../../../core/services/ai_history_service.dart';
 import '../../../shared/widgets/feature_history_sheet.dart';
+import '../../../shared/widgets/fun_loading_word.dart';
 
 // ─── Screen ───────────────────────────────────────────────────────────────────
 
@@ -304,7 +305,10 @@ class _CompareScreenState extends ConsumerState<CompareScreen> {
                   ? const SizedBox(width: 16, height: 16,
                       child: CircularProgressIndicator(strokeWidth: 2, color: AppColors.surface))
                   : const Icon(Icons.compare_arrows_rounded),
-              label: Text(_comparing ? 'Comparing documents...' : 'Compare Documents'),
+              label: _comparing
+                  ? FunLoadingWord(
+                      style: const TextStyle(fontWeight: FontWeight.w600, color: AppColors.surface))
+                  : const Text('Compare Documents'),
               style: ElevatedButton.styleFrom(
                 padding: const EdgeInsets.symmetric(vertical: 14),
                 textStyle: const TextStyle(fontSize: 15, fontWeight: FontWeight.w600),
@@ -479,7 +483,7 @@ class _DocSelector extends StatelessWidget {
               SizedBox(width: 16, height: 16,
                   child: CircularProgressIndicator(strokeWidth: 2, color: color)),
               const SizedBox(width: 10),
-              Text(uploadingStatus ?? 'Uploading...',
+              FunLoadingWord(
                   style: TextStyle(fontSize: 13, color: color, fontWeight: FontWeight.w500)),
             ]),
           )

@@ -15,6 +15,7 @@ import '../../../core/network/dio_client.dart';
 import '../../documents/providers/document_provider.dart';
 import '../../ai_chat/providers/ai_provider.dart';
 import '../../../shared/widgets/feature_history_sheet.dart';
+import '../../../shared/widgets/fun_loading_word.dart';
 
 /// Title + one-line subtitle shown at the top of each AI feature screen,
 /// mirroring the "Generate Summary — Summarize documents in seconds and
@@ -473,6 +474,8 @@ class _AiFeatureDetailScreenState extends ConsumerState<AiFeatureDetailScreen> {
 
         if (docsState.isUploading) ...[
           LinearProgressIndicator(value: docsState.uploadProgress),
+          const SizedBox(height: 8),
+          const FunLoadingWord(),
           const SizedBox(height: AppSpacing.md),
         ],
 
@@ -596,12 +599,12 @@ class _AiFeatureDetailScreenState extends ConsumerState<AiFeatureDetailScreen> {
         const SizedBox(height: 16),
 
         if (_running)
-          const Card(child: Padding(
-            padding: EdgeInsets.all(AppSpacing.lg),
+          Card(child: Padding(
+            padding: const EdgeInsets.all(AppSpacing.lg),
             child: Center(child: Column(children: [
-              CircularProgressIndicator(),
-              SizedBox(height: AppSpacing.md),
-              Text('AI is thinking...'),
+              const CircularProgressIndicator(),
+              const SizedBox(height: AppSpacing.md),
+              const FunLoadingWord(),
             ])),
           )),
 

@@ -12,6 +12,7 @@ import '../../../core/network/dio_client.dart';
 import '../../../core/services/ai_history_service.dart';
 import '../../../core/services/clipboard_helper.dart';
 import '../../../shared/widgets/feature_history_sheet.dart';
+import '../../../shared/widgets/fun_loading_word.dart';
 
 class ComplaintReplyScreen extends ConsumerStatefulWidget {
   const ComplaintReplyScreen({super.key});
@@ -406,8 +407,11 @@ class _ComplaintReplyScreenState extends ConsumerState<ComplaintReplyScreen> {
                       child: CircularProgressIndicator(
                           strokeWidth: 2, color: AppColors.surface))
                   : const Icon(Icons.auto_awesome_rounded),
-              label: Text(
-                  _generating ? _statusMsg : 'Generate Complaint Reply'),
+              label: _generating
+                  ? FunLoadingWord(
+                      style: const TextStyle(
+                          fontSize: 15, fontWeight: FontWeight.w600, color: AppColors.surface))
+                  : const Text('Generate Complaint Reply'),
               style: ElevatedButton.styleFrom(
                 padding: const EdgeInsets.symmetric(vertical: 14),
                 textStyle: const TextStyle(

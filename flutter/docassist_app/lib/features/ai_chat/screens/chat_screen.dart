@@ -3,6 +3,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../../../core/theme/app_theme.dart';
 import '../providers/ai_provider.dart';
 import 'chat_history_sheet.dart';
+import '../../../shared/widgets/fun_loading_word.dart';
 
 class ChatScreen extends ConsumerStatefulWidget {
   final String documentId;
@@ -248,7 +249,7 @@ class _WelcomeMessage extends StatelessWidget {
         const SizedBox(height: AppSpacing.lg),
         const CircularProgressIndicator(),
         const SizedBox(height: AppSpacing.sm),
-        const Text('Starting session...'),
+        const FunLoadingWord(),
       ],
     ]),
   ));

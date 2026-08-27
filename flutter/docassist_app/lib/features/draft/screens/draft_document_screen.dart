@@ -7,6 +7,7 @@ import '../../../core/services/ai_history_service.dart';
 import '../../../core/services/document_export_service.dart';
 import '../../../core/services/clipboard_helper.dart';
 import '../../../shared/widgets/feature_history_sheet.dart';
+import '../../../shared/widgets/fun_loading_word.dart';
 
 // ─── Document types ───────────────────────────────────────────────────────────
 
@@ -392,15 +393,16 @@ class _DraftDocumentScreenState extends ConsumerState<DraftDocumentScreen> {
 
   // ── Generating (prompt flow) view ──────────────────────────────────────────
 
-  Widget _buildGenerating() => const Center(
+  Widget _buildGenerating() => Center(
     child: Column(mainAxisSize: MainAxisSize.min, children: [
-      CircularProgressIndicator(color: AppColors.primary),
-      SizedBox(height: 16),
-      Text('Drafting your document...',
-          style: TextStyle(fontSize: 13.5, fontWeight: FontWeight.w600,
-              color: AppColors.textPrimary)),
-      SizedBox(height: 4),
-      Text('This may take a moment.',
+      const CircularProgressIndicator(color: AppColors.primary),
+      const SizedBox(height: 16),
+      FunLoadingWord(
+        style: const TextStyle(fontSize: 13.5, fontWeight: FontWeight.w600,
+            color: AppColors.textPrimary),
+      ),
+      const SizedBox(height: 4),
+      const Text('This may take a moment.',
           style: TextStyle(fontSize: 12, color: AppColors.textSecondary)),
     ]),
   );

@@ -83,27 +83,33 @@ class DocumentPreview extends StatelessWidget {
     }
     flushBullets();
 
-    return Container(
-      width: double.infinity,
-      decoration: BoxDecoration(
-        color: Colors.white,
-        borderRadius: BorderRadius.circular(2),
-        border: Border.all(color: const Color(0xFFE5E7EB)),
-        boxShadow: const [
-          BoxShadow(color: Color(0x14000000), blurRadius: 12, offset: Offset(0, 4)),
-        ],
-      ),
-      padding: const EdgeInsets.symmetric(horizontal: 28, vertical: 32),
-      child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-        Text(title,
-            style: const TextStyle(fontFamily: 'serif', fontSize: 20,
-                fontWeight: FontWeight.bold, color: Color(0xFF111827))),
-        const Padding(
-          padding: EdgeInsets.symmetric(vertical: 12),
-          child: Divider(height: 1, color: Color(0xFFD1D5DB)),
+    // SelectionArea makes every Text/Text.rich inside selectable with the
+    // mouse/touch and copyable via Ctrl+C or the system context menu —
+    // without it, plain Text widgets render but can't be selected at all,
+    // which is why the "click and drag to copy" behavior was missing.
+    return SelectionArea(
+      child: Container(
+        width: double.infinity,
+        decoration: BoxDecoration(
+          color: Colors.white,
+          borderRadius: BorderRadius.circular(2),
+          border: Border.all(color: const Color(0xFFE5E7EB)),
+          boxShadow: const [
+            BoxShadow(color: Color(0x14000000), blurRadius: 12, offset: Offset(0, 4)),
+          ],
         ),
-        ...blocks,
-      ]),
+        padding: const EdgeInsets.symmetric(horizontal: 28, vertical: 32),
+        child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+          Text(title,
+              style: const TextStyle(fontFamily: 'serif', fontSize: 20,
+                  fontWeight: FontWeight.bold, color: Color(0xFF111827))),
+          const Padding(
+            padding: EdgeInsets.symmetric(vertical: 12),
+            child: Divider(height: 1, color: Color(0xFFD1D5DB)),
+          ),
+          ...blocks,
+        ]),
+      ),
     );
   }
 }

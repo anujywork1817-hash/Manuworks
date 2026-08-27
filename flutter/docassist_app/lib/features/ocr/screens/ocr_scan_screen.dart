@@ -10,6 +10,7 @@ import '../../../core/services/document_export_service.dart';
 import '../../../shared/widgets/feature_history_sheet.dart';
 import '../../../shared/widgets/fun_loading_word.dart';
 import '../../../shared/widgets/document_preview.dart';
+import '../../../shared/widgets/share_options_sheet.dart';
 
 class OcrScanScreen extends StatefulWidget {
   const OcrScanScreen({super.key});
@@ -128,12 +129,8 @@ class _OcrScanScreenState extends State<OcrScanScreen> {
         doneMessage: 'PDF ready to save or share',
       );
 
-  Future<void> _shareResult() => _handleExport(
-        () => DocumentExportService.shareReport(
-            title: 'OCR Scan — ${_image?.name ?? 'Result'}', content: _text!),
-        busyMessage: 'Preparing to share...',
-        doneMessage: 'Choose where to share (WhatsApp, Gmail, etc.)',
-      );
+  void _shareResult() => showShareOptionsSheet(
+      context, title: 'OCR Scan — ${_image?.name ?? 'Result'}', content: _text!);
 
   Future<void> _exportDocx() => _handleExport(
         () => DocumentExportService.exportReportToDocx(
@@ -176,12 +173,28 @@ class _OcrScanScreenState extends State<OcrScanScreen> {
     );
   }
 
+  static const _accent = Color(0xFFEA580C); // matches the OCR tile on the dashboard
+
   Widget _buildScanView() => SingleChildScrollView(
     padding: const EdgeInsets.all(16),
     child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-      const Text('OCR Scanner',
-          style: TextStyle(fontSize: 22, fontWeight: FontWeight.bold,
-              color: AppColors.textPrimary)),
+      Row(children: [
+        Container(
+          width: 40, height: 40,
+          decoration: BoxDecoration(
+            color: _accent.withValues(alpha: 0.15),
+            borderRadius: BorderRadius.circular(10),
+          ),
+          alignment: Alignment.center,
+          child: const Icon(Icons.document_scanner_outlined, color: _accent, size: 20),
+        ),
+        const SizedBox(width: 10),
+        const Expanded(
+          child: Text('OCR Scanner',
+              style: TextStyle(fontSize: 22, fontWeight: FontWeight.bold,
+                  color: AppColors.textPrimary)),
+        ),
+      ]),
       const SizedBox(height: 6),
       const Text('Convert scanned documents and images into editable, searchable text',
           style: TextStyle(fontSize: 13, color: AppColors.textSecondary)),
@@ -195,15 +208,20 @@ class _OcrScanScreenState extends State<OcrScanScreen> {
           color: AppColors.surface,
           borderRadius: BorderRadius.circular(14),
           border: Border.all(
-            color: _image != null ? AppColors.primary : AppColors.outline,
+            color: _image != null ? _accent : AppColors.outline,
             width: _image != null ? 1.5 : 1,
           ),
           boxShadow: AppShadows.sm,
         ),
         child: Column(children: [
           if (_image == null) ...[
-            const Icon(Icons.cloud_upload_outlined, size: 40, color: AppColors.textTertiary),
-            const SizedBox(height: 12),
+            Container(
+              width: 64, height: 64,
+              decoration: BoxDecoration(color: _accent.withValues(alpha: 0.1), shape: BoxShape.circle),
+              alignment: Alignment.center,
+              child: const Icon(Icons.cloud_upload_outlined, size: 32, color: _accent),
+            ),
+            const SizedBox(height: 14),
             const Text('Choose a file, drag and drop, or paste',
                 textAlign: TextAlign.center,
                 style: TextStyle(fontSize: 13, color: AppColors.textSecondary)),
@@ -214,13 +232,19 @@ class _OcrScanScreenState extends State<OcrScanScreen> {
             const SizedBox(height: 18),
             OutlinedButton.icon(
               onPressed: _pickFile,
-              icon: const Icon(Icons.folder_open_outlined, size: 16),
-              label: const Text('Browse'),
+              icon: const Icon(Icons.folder_open_outlined, size: 16, color: _accent),
+              label: const Text('Browse', style: TextStyle(color: _accent, fontWeight: FontWeight.w600)),
+              style: OutlinedButton.styleFrom(side: const BorderSide(color: _accent)),
             ),
           ] else ...[
-            Icon(
-              _isPdf ? Icons.picture_as_pdf_outlined : Icons.image_outlined,
-              size: 40, color: AppColors.primary,
+            Container(
+              width: 64, height: 64,
+              decoration: BoxDecoration(color: _accent.withValues(alpha: 0.1), shape: BoxShape.circle),
+              alignment: Alignment.center,
+              child: Icon(
+                _isPdf ? Icons.picture_as_pdf_outlined : Icons.image_outlined,
+                size: 32, color: _accent,
+              ),
             ),
             const SizedBox(height: 12),
             Text(_image!.name,
@@ -264,7 +288,7 @@ class _OcrScanScreenState extends State<OcrScanScreen> {
           onPressed: (_image == null || _scanning) ? null : _extract,
           style: ElevatedButton.styleFrom(
             padding: const EdgeInsets.symmetric(vertical: 14),
-            backgroundColor: AppColors.primary,
+            backgroundColor: _accent,
             shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
           ),
           child: _scanning

@@ -9,6 +9,7 @@ import '../../../core/services/clipboard_helper.dart';
 import '../../../shared/widgets/feature_history_sheet.dart';
 import '../../../shared/widgets/fun_loading_word.dart';
 import '../../../shared/widgets/document_preview.dart';
+import '../../../shared/widgets/share_options_sheet.dart';
 
 // ─── Document types ───────────────────────────────────────────────────────────
 
@@ -343,25 +344,10 @@ class _DraftDocumentScreenState extends ConsumerState<DraftDocumentScreen> {
     }
   }
 
-  bool _sharing = false;
-  Future<void> _shareResult() async {
+  void _shareResult() {
     if (_result == null) return;
-    setState(() => _sharing = true);
-    try {
-      await DocumentExportService.shareReport(
-        title: _resultTitle ?? _selected?.id ?? 'Document',
-        content: _result!,
-      );
-    } catch (e) {
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(SnackBar(
-          content: Text('Share failed: $e'),
-          behavior: SnackBarBehavior.floating,
-        ));
-      }
-    } finally {
-      if (mounted) setState(() => _sharing = false);
-    }
+    showShareOptionsSheet(context,
+        title: _resultTitle ?? _selected?.id ?? 'Document', content: _result!);
   }
 
   @override
@@ -711,11 +697,8 @@ class _DraftDocumentScreenState extends ConsumerState<DraftDocumentScreen> {
             ),
           ),
           OutlinedButton.icon(
-            onPressed: _sharing ? null : _shareResult,
-            icon: _sharing
-                ? const SizedBox(width: 14, height: 14,
-                    child: CircularProgressIndicator(strokeWidth: 2))
-                : const Icon(Icons.share_outlined, size: 15),
+            onPressed: _shareResult,
+            icon: const Icon(Icons.share_outlined, size: 15),
             label: const Text('Share'),
             style: OutlinedButton.styleFrom(
               padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),

@@ -292,6 +292,31 @@ class DocumentExportService {
     }
   }
 
+  /// Opens WhatsApp (app on mobile, WhatsApp Web on desktop) with the
+  /// content pre-filled as a text message. WhatsApp's web share link only
+  /// accepts text — it cannot carry a file attachment — so this sends a
+  /// preview of the content and lets the user pick a chat to send it to.
+  static Future<void> shareViaWhatsApp({
+    required String title,
+    required String content,
+  }) async {
+    const maxChars = 1500; // WhatsApp truncates very long pre-filled text
+    final body = content.length > maxChars ? '${content.substring(0, maxChars)}…' : content;
+    final uri = Uri.parse('https://wa.me/?text=${Uri.encodeComponent('$title\n\n$body')}');
+    await launchUrl(uri, mode: LaunchMode.externalApplication);
+  }
+
+  /// Opens Gmail (compose in the Gmail app on mobile, Gmail's web composer
+  /// on desktop) with the subject/body pre-filled from the content.
+  static Future<void> shareViaGmail({
+    required String title,
+    required String content,
+  }) async {
+    final uri = Uri.parse('https://mail.google.com/mail/?view=cm&fs=1&'
+        'su=${Uri.encodeComponent(title)}&body=${Uri.encodeComponent(content)}');
+    await launchUrl(uri, mode: LaunchMode.externalApplication);
+  }
+
   /// Renders an AI-generated report to a minimal .docx and opens the
   /// share/save sheet (or triggers a download on web). Used by the "DOCX"
   /// toolbar action.

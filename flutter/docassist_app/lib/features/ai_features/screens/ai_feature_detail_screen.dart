@@ -16,6 +16,7 @@ import '../../ai_chat/providers/ai_provider.dart';
 import '../../../shared/widgets/feature_history_sheet.dart';
 import '../../../shared/widgets/fun_loading_word.dart';
 import '../../../shared/widgets/document_preview.dart';
+import '../../../shared/widgets/share_options_sheet.dart';
 
 /// Title + one-line subtitle shown at the top of each AI feature screen,
 /// mirroring the "Generate Summary — Summarize documents in seconds and
@@ -344,13 +345,6 @@ class _AiFeatureDetailScreenState extends ConsumerState<AiFeatureDetailScreen> {
             title: _reportTitle, content: _result!),
         busyMessage: 'Preparing Word file...',
         doneMessage: 'DOCX ready to save or share',
-      );
-
-  Future<void> _shareReport() => _handleReportAction(
-        () => DocumentExportService.shareReport(
-            title: _reportTitle, content: _result!),
-        busyMessage: 'Preparing to share...',
-        doneMessage: 'Choose where to share (WhatsApp, Gmail, etc.)',
       );
 
   Future<void> _downloadReport() => _handleReportAction(
@@ -695,7 +689,8 @@ class _AiFeatureDetailScreenState extends ConsumerState<AiFeatureDetailScreen> {
                 IconButton(
                   icon: const Icon(Icons.share_outlined, size: 18),
                   tooltip: 'Share (WhatsApp, Gmail, etc.)',
-                  onPressed: _shareReport,
+                  onPressed: () => showShareOptionsSheet(
+                      context, title: _reportTitle, content: _result!),
                 ),
                 IconButton(
                   icon: const Icon(Icons.picture_as_pdf_outlined, size: 18),

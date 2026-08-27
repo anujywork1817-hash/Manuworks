@@ -372,6 +372,389 @@ const kDraftPromptTemplates = [
     'triggered by the proposed transaction. Recommend strategies to '
     'mitigate transaction execution risks.',
   ),
+  _PromptTemplate(
+    'Reps & Warranties Review', 'Due Diligence & Transaction Support',
+    'Review the representations and warranties in the transaction '
+    'documents from the perspective of [Buyer/Seller]. Identify overly '
+    'broad obligations, knowledge qualifiers, materiality concerns, '
+    'disclosure gaps, survival periods, and enforcement risks. Recommend '
+    'commercially balanced revisions.',
+  ),
+  _PromptTemplate(
+    'Indemnity Protection Analysis', 'Due Diligence & Transaction Support',
+    'Assess the indemnity framework in the transaction documents. Review '
+    'indemnity triggers, liability caps, baskets, deductibles, survival '
+    'periods, claim procedures, and exclusions. Identify gaps in '
+    'protection and recommend risk allocation mechanisms.',
+  ),
+  _PromptTemplate(
+    'Transaction Closing Tracker', 'Due Diligence & Transaction Support',
+    'Create a transaction closing tracker identifying all closing '
+    'deliverables, responsible parties, timelines, dependencies, '
+    'regulatory filings, and post-closing obligations.',
+  ),
+  _PromptTemplate(
+    'Fraud Risk Review — Target Business', 'Due Diligence & Transaction Support',
+    'Conduct anti-corruption and misconduct due diligence on the target '
+    'business. Assess internal controls, whistleblower complaints, fraud '
+    'allegations, related-party dealings, compliance investigations, and '
+    'regulatory exposure.',
+  ),
+  _PromptTemplate(
+    'Litigation Due Diligence', 'Due Diligence & Transaction Support',
+    'Conduct litigation due diligence on the target entity. Review '
+    'pending, threatened, and historical disputes, regulatory proceedings, '
+    'arbitration matters, and enforcement actions.',
+  ),
+  _PromptTemplate(
+    'Employment Law Due Diligence', 'Due Diligence & Transaction Support',
+    'Conduct employment due diligence on the target company. Review '
+    'employment agreements, workplace policies, employee benefits, stock '
+    'option plans, labour law compliance, POSH obligations, and '
+    'termination-related risks. Identify liabilities and recommended '
+    'corrective actions.',
+  ),
+  _PromptTemplate(
+    'Technology & Software Due Diligence', 'Due Diligence & Transaction Support',
+    'Review technology assets and software arrangements of the target '
+    'business. Assess ownership of source code, software licences, SaaS '
+    'agreements, cybersecurity practices, data handling processes, and '
+    'vendor dependencies. Identify operational and legal risks.',
+  ),
+  _PromptTemplate(
+    'Red Flag Due Diligence Report', 'Due Diligence & Transaction Support',
+    'Prepare a red flag due diligence report highlighting material legal, '
+    'commercial, regulatory, and litigation risks affecting the '
+    'transaction. Assess deal impact, recommend remedial actions, and '
+    'identify issues requiring specific indemnities, price adjustments, or '
+    'closing conditions.',
+  ),
+  _PromptTemplate(
+    'Transaction Risk Memo', 'Due Diligence & Transaction Support',
+    'Prepare a transaction risk memorandum summarising legal, regulatory, '
+    'contractual, employment, intellectual property, litigation, and '
+    'compliance risks identified during due diligence. Categorise risks by '
+    'severity and recommend mitigation measures.',
+  ),
+  _PromptTemplate(
+    'Founder & Cap Table Review', 'Due Diligence & Transaction Support',
+    'Review the startup\'s ownership structure and founder arrangements. '
+    'Assess vesting provisions, share transfers, investor rights, ESOP '
+    'allocations, dilution risks, and governance controls. Identify issues '
+    'that may impact investment or exit transactions.',
+  ),
+
+  // ── Regulatory Compliance & Investigations ──────────────────────────────
+  _PromptTemplate(
+    'DPDPA Compliance Gap Assessment', 'Regulatory Compliance & Investigations',
+    'Conduct a compliance gap assessment under the Digital Personal Data '
+    'Protection Act, 2023. Evaluate consent mechanisms, privacy notices, '
+    'vendor management, data retention practices, breach response '
+    'procedures, and data principal rights. Categorise compliance gaps by '
+    'risk level and recommend a practical remediation roadmap.',
+  ),
+  _PromptTemplate(
+    'Employment Law Compliance Review', 'Regulatory Compliance & Investigations',
+    'Prepare an employment compliance audit under applicable Indian labour '
+    'laws. Assess employment contracts, wage and benefits compliance, '
+    'working conditions, social security obligations, POSH requirements, '
+    'and disciplinary procedures.',
+  ),
+  _PromptTemplate(
+    'AML & KYC Compliance Audit', 'Regulatory Compliance & Investigations',
+    'Prepare an anti-money laundering and KYC compliance assessment. '
+    'Review customer onboarding processes, transaction monitoring systems, '
+    'reporting obligations, record retention practices, and suspicious '
+    'transaction controls. Identify regulatory vulnerabilities and '
+    'mitigation measures.',
+  ),
+  _PromptTemplate(
+    'Internal Investigation Work Plan', 'Regulatory Compliance & Investigations',
+    'Develop an internal investigation plan for allegations of employee '
+    'misconduct, fraud, corruption, or regulatory violations. Define '
+    'scope, investigation objectives, witness interview strategy, document '
+    'preservation measures, reporting structure, and legal risk '
+    'considerations.',
+  ),
+  _PromptTemplate(
+    'Telecom Compliance Review', 'Regulatory Compliance & Investigations',
+    'Conduct a regulatory compliance assessment for a telecom or '
+    'technology company. Review licensing conditions, cybersecurity '
+    'obligations, intermediary responsibilities, data protection '
+    'requirements, and regulatory reporting obligations.',
+  ),
+  _PromptTemplate(
+    'Environmental Compliance Review', 'Regulatory Compliance & Investigations',
+    'Prepare an environmental compliance assessment for an industrial or '
+    'infrastructure project. Review permits, environmental clearances, '
+    'waste management practices, reporting obligations, and ongoing '
+    'compliance requirements. Identify regulatory risks and corrective '
+    'measures.',
+  ),
+  _PromptTemplate(
+    'Licence Suspension Risk Review', 'Regulatory Compliance & Investigations',
+    'Evaluate the legal risks arising from potential suspension, '
+    'revocation, or non-renewal of a regulatory licence. Analyse grounds '
+    'for regulatory action, available defences, procedural safeguards, and '
+    'business continuity measures.',
+  ),
+  _PromptTemplate(
+    'Regulatory Reporting Risk Assessment', 'Regulatory Compliance & Investigations',
+    'Assess whether the incident (explain the incident) triggers mandatory '
+    'reporting obligations to regulators or authorities. Analyse statutory '
+    'requirements, reporting timelines, disclosure thresholds, and legal '
+    'consequences of non-reporting.',
+  ),
+  _PromptTemplate(
+    'Non-Compliance Risk Assessment', 'Regulatory Compliance & Investigations',
+    'Assess regulatory exposure arising from alleged non-compliance with '
+    'applicable laws. Identify potential penalties, enforcement actions, '
+    'prosecution risks, business disruptions, and reputational concerns. '
+    'Recommend immediate response and mitigation measures.',
+  ),
+  _PromptTemplate(
+    'RBI Inspection Readiness Audit', 'Regulatory Compliance & Investigations',
+    'Prepare an RBI regulatory inspection readiness assessment. Review '
+    'governance processes, compliance controls, outsourcing arrangements, '
+    'customer protection measures, and regulatory reporting systems.',
+  ),
+  _PromptTemplate(
+    'SEBI Investigation Readiness Report', 'Regulatory Compliance & Investigations',
+    'Conduct a SEBI investigation readiness review. Assess insider trading '
+    'controls, disclosure practices, corporate governance procedures, '
+    'trading records, and compliance documentation. Identify '
+    'vulnerabilities and recommend risk mitigation measures.',
+  ),
+  _PromptTemplate(
+    'Show-Cause Notice Response Strategy', 'Regulatory Compliance & Investigations',
+    'Develop a response strategy for a regulatory show cause notice. '
+    'Analyse the allegations, applicable legal framework, evidentiary '
+    'record, procedural defects, potential defences, and regulatory '
+    'exposure. Structure legal arguments and recommended corrective '
+    'actions.',
+  ),
+
+  // ── Intellectual Property Strategy ──────────────────────────────────────
+  _PromptTemplate(
+    'Patentability Assessment', 'Intellectual Property Strategy',
+    'Conduct a patentability assessment for [product/technology] under the '
+    'Patents Act, 1970. Analyse novelty, inventive step, industrial '
+    'applicability, patentable subject matter restrictions, prior art '
+    'risks, and prosecution challenges. Recommend filing, claim drafting, '
+    'and protection strategies.',
+  ),
+  _PromptTemplate(
+    'Freedom-to-Operate Analysis', 'Intellectual Property Strategy',
+    'Conduct a freedom-to-operate assessment for the launch of [product/'
+    'service] in India. Identify relevant third-party patents, '
+    'infringement risks, licensing requirements, design-around options, '
+    'and litigation exposure.',
+  ),
+  _PromptTemplate(
+    'Brand Protection Strategy', 'Intellectual Property Strategy',
+    'Develop a comprehensive brand protection strategy for [business/'
+    'product]. Assess trademark portfolio gaps, online infringement risks, '
+    'counterfeit exposure, domain protection, enforcement priorities, and '
+    'monitoring mechanisms. Recommend practical protection measures.',
+  ),
+  _PromptTemplate(
+    'Trademark Opposition Strategy', 'Intellectual Property Strategy',
+    'Prepare a trademark opposition or rectification strategy under Indian '
+    'trademark law. Analyse competing rights, prior use claims, registry '
+    'records, evidentiary requirements, procedural challenges, and '
+    'likelihood of success.',
+  ),
+  _PromptTemplate(
+    'Anti-Counterfeiting Strategy', 'Intellectual Property Strategy',
+    'Develop a comprehensive anti-counterfeiting strategy for online '
+    'marketplaces under Indian law. Identify platform takedown mechanisms, '
+    'evidence collection and preservation requirements, digital '
+    'investigation techniques, and cross-platform monitoring protocols. '
+    'Analyse trademark, copyright, design, and passing-off remedies '
+    'against infringing sellers and listings. Assess the availability of '
+    'interim and permanent injunctions, ex parte injunctions, John Doe/'
+    'Ashok Kumar orders, damages, rendition of accounts, and blocking '
+    'relief.',
+  ),
+  _PromptTemplate(
+    'IP Strategy Plan', 'Intellectual Property Strategy',
+    'Prepare a comprehensive intellectual property strategy for '
+    '[business/product/service]. Assess patent, trademark, copyright, '
+    'design, trade secret, domain name, technology licensing, '
+    'enforcement, and commercialisation opportunities. Prioritise actions '
+    'based on business objectives, risk exposure, and growth plans.',
+  ),
+  _PromptTemplate(
+    'Design Protection Strategy', 'Intellectual Property Strategy',
+    'Assess whether the product\'s visual features qualify for protection '
+    'under the Designs Act, 2000. Analyse registrability, novelty '
+    'requirements, competitor risks, overlap with copyright and trademark '
+    'rights, and enforcement opportunities.',
+  ),
+  _PromptTemplate(
+    'IP Strategy — Manufacturing Business', 'Intellectual Property Strategy',
+    'Conduct an intellectual property assessment for a manufacturing '
+    'enterprise. Review patents, industrial designs, trade secrets, '
+    'supplier-related IP risks, technology licences, and counterfeit '
+    'threats. Recommend protection and enforcement measures.',
+  ),
+  _PromptTemplate(
+    'IP Strategy — D2C Brand', 'Intellectual Property Strategy',
+    'Develop an intellectual property strategy for a direct-to-consumer '
+    'brand. Assess trademark protection, packaging rights, product design '
+    'protection, domain strategy, influencer content ownership, and '
+    'anti-counterfeiting measures.',
+  ),
+  _PromptTemplate(
+    'Technology Transfer Strategy', 'Intellectual Property Strategy',
+    'Develop a technology transfer strategy for commercialisation of '
+    'intellectual property. Assess ownership rights, licensing '
+    'structures, royalty arrangements, exclusivity provisions, regulatory '
+    'considerations, and risk allocation mechanisms.',
+  ),
+  _PromptTemplate(
+    'Trade Secret Misappropriation Strategy', 'Intellectual Property Strategy',
+    'Develop a legal strategy for suspected misuse of confidential '
+    'information or trade secrets. Analyse evidence, contractual '
+    'protections, injunctive remedies, damages claims, and litigation '
+    'risks. Recommend immediate and long-term enforcement actions.',
+  ),
+  _PromptTemplate(
+    'Employee Exit IP Protection Strategy', 'Intellectual Property Strategy',
+    'Conduct an intellectual property risk assessment relating to a '
+    'departing employee. Assess confidential information exposure, '
+    'customer solicitation risks, data extraction concerns, restrictive '
+    'covenant enforceability, and evidence preservation requirements.',
+  ),
+
+  // ── Employment & Labour Law ─────────────────────────────────────────────
+  _PromptTemplate(
+    'Executive Employment Agreement', 'Employment & Labour Law',
+    'Draft a senior executive employment agreement under Indian law. '
+    'Include compensation structure, performance incentives, '
+    'confidentiality obligations, intellectual property ownership, '
+    'conflict of interest restrictions, termination provisions, garden '
+    'leave, non-solicitation protections, and post-employment obligations.',
+  ),
+  _PromptTemplate(
+    'Remote & Hybrid Work Policy', 'Employment & Labour Law',
+    'Draft a remote and hybrid work policy for an Indian organisation. '
+    'Address attendance requirements, productivity monitoring, '
+    'cybersecurity obligations, data protection, reimbursement policies, '
+    'disciplinary procedures, and confidentiality safeguards.',
+  ),
+  _PromptTemplate(
+    'Labour Law Compliance Audit', 'Employment & Labour Law',
+    'Conduct a labour law compliance audit for a factory, corporate '
+    'office, retail establishment, or service business. Assess wage '
+    'compliance, working hours, leave entitlements, social security '
+    'contributions, statutory registers, notices, and labour law filings. '
+    'Identify compliance gaps and remediation measures.',
+  ),
+  _PromptTemplate(
+    'Consultancy vs. Employment Classification Assessment', 'Employment & Labour Law',
+    'Conduct a worker classification assessment to determine whether the '
+    'engagement constitutes employment or an independent contractor '
+    'relationship under Indian law. Analyse control, supervision, economic '
+    'dependency, statutory benefits exposure, and misclassification risks.',
+  ),
+  _PromptTemplate(
+    'Labour Law Compliance Audit — Multi-State', 'Employment & Labour Law',
+    'Conduct a labour law compliance audit for a factory, corporate '
+    'office, retail establishment, or service business operating in a '
+    'single/multiple states. Assess wage compliance, working hours, leave '
+    'entitlements, social security contributions, statutory registers, '
+    'notices, and labour law filings. Identify compliance gaps and '
+    'remediation measures.',
+  ),
+  _PromptTemplate(
+    'Fraud & Misappropriation Investigation', 'Employment & Labour Law',
+    'Develop an investigation strategy for suspected employee fraud, '
+    'theft, data misuse, or financial misconduct. Assess evidence '
+    'requirements, suspension considerations, recovery options, '
+    'disciplinary action, and civil or criminal remedies.',
+  ),
+  _PromptTemplate(
+    'POSH Compliance Audit', 'Employment & Labour Law',
+    'Conduct a compliance assessment under the Sexual Harassment of Women '
+    'at Workplace (Prevention, Prohibition and Redressal) Act, 2013. '
+    'Review Internal Committee constitution, policies, awareness '
+    'programmes, inquiry procedures, and statutory reporting obligations.',
+  ),
+  _PromptTemplate(
+    'Employee Termination Risk Assessment', 'Employment & Labour Law',
+    'Conduct a legal risk assessment before terminating an employee. '
+    'Analyse contractual obligations, statutory protections, disciplinary '
+    'records, retrenchment implications, notice requirements, and '
+    'potential litigation exposure. Recommend a legally defensible '
+    'termination strategy.',
+  ),
+  _PromptTemplate(
+    'Employee Confidentiality & Trade Secret Protection Strategy', 'Employment & Labour Law',
+    'Develop a comprehensive trade secret and confidential information '
+    'protection strategy for the organisation. Assess employment, '
+    'consultant, and vendor agreements, confidentiality and IP assignment '
+    'clauses, access controls, cybersecurity safeguards, and data '
+    'classification measures. Review onboarding, offboarding, and '
+    'employee mobility risks, including remote work and third-party '
+    'access. Analyse the enforceability of contractual protections and '
+    'available civil, criminal, and injunctive remedies for '
+    'misappropriation. Recommend practical governance, monitoring, and '
+    'enforcement mechanisms to safeguard proprietary information.',
+  ),
+  _PromptTemplate(
+    'Retrenchment & Workforce Reduction Strategy', 'Employment & Labour Law',
+    'Develop a workforce restructuring and retrenchment strategy under '
+    'Indian labour laws. Assess statutory requirements, employee '
+    'classifications, compensation obligations, consultation requirements, '
+    'and litigation risks. Recommend an implementation roadmap.',
+  ),
+  _PromptTemplate(
+    'Sale of Goodwill Clause Analysis', 'Employment & Labour Law',
+    'Review the sale of goodwill clause and assess its enforceability '
+    'under Section 27 of the Indian Contract Act, 1872. Analyse whether '
+    'the restrictions are ancillary to a genuine transfer of goodwill, '
+    'including their duration, territorial scope, restricted activities, '
+    'and commercial justification. Identify drafting weaknesses, '
+    'litigation risks, and relevant judicial precedents. Evaluate whether '
+    'the restraint is reasonable and likely to be upheld by Indian courts. '
+    'Recommend revisions to strengthen enforceability and protect the '
+    'purchaser\'s business interests.',
+  ),
+
+  // ── M&A Legal Support ────────────────────────────────────────────────────
+  _PromptTemplate(
+    'Legal DD Risk Memorandum', 'M&A Legal Support',
+    'Prepare a legal due diligence memorandum for the proposed '
+    'acquisition. Analyse corporate, contractual, regulatory, employment, '
+    'litigation, intellectual property, data protection, real estate, and '
+    'tax risks. Categorise findings by materiality, identify deal '
+    'breakers, and recommend pre-closing and post-closing mitigation '
+    'measures.',
+  ),
+  _PromptTemplate(
+    'Share Purchase Risk Allocation Review', 'M&A Legal Support',
+    'Review the Share Purchase Agreement from the perspective of [Buyer/'
+    'Seller]. Analyse representations and warranties, indemnities, '
+    'limitations of liability, disclosure mechanisms, materiality '
+    'qualifiers, survival periods, and closing conditions. Identify '
+    'negotiation priorities and recommend market-standard revisions.',
+  ),
+  _PromptTemplate(
+    'Material Adverse Change (MAC) Assessment', 'M&A Legal Support',
+    'Analyse whether the identified events/event constitute a Material '
+    'Adverse Change under the transaction documents. Assess contractual '
+    'definitions, carve-outs, evidentiary requirements, industry-specific '
+    'risks, and available remedies. Evaluate closing risks and '
+    'termination rights.',
+  ),
+  _PromptTemplate(
+    'Regulatory Approval Roadmap', 'M&A Legal Support',
+    'Prepare a regulatory approval matrix for the transaction. Assess '
+    'requirements under the Companies Act, Competition Act, FEMA, '
+    'sector-specific regulations, stock exchange regulations, RBI '
+    'approvals, and other governmental consents.',
+  ),
 ];
 
 // ─── Screen ───────────────────────────────────────────────────────────────────

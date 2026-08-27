@@ -349,11 +349,11 @@ class _GeneralChatScreenState extends ConsumerState<GeneralChatScreen> {
                 Container(
                   width: 38, height: 38,
                   decoration: BoxDecoration(
-                    color: cs.primaryContainer,
+                    color: AppColors.accentContainer,
                     borderRadius: BorderRadius.circular(10),
                   ),
-                  child: Icon(Icons.auto_awesome_rounded,
-                      color: cs.onPrimaryContainer, size: 20),
+                  child: const Icon(Icons.auto_awesome_rounded,
+                      color: AppColors.textPrimary, size: 20),
                 ),
                 const SizedBox(width: 12),
                 Expanded(
@@ -618,20 +618,19 @@ class _HeroSuggestionCardState extends State<_HeroSuggestionCard>
         width: double.infinity,
         constraints: BoxConstraints(maxWidth: widget.floating ? 520 : 460),
         padding: EdgeInsets.fromLTRB(20, widget.floating ? 16 : 26, 20, widget.floating ? 14 : 22),
-        decoration: const BoxDecoration(
-          gradient: LinearGradient(
-            begin: Alignment.topLeft, end: Alignment.bottomRight,
-            colors: [Color(0xFF312E81), Color(0xFF4F46E5), Color(0xFF7C3AED)],
-          ),
-          boxShadow: [
-            BoxShadow(color: Color(0x334F46E5), blurRadius: 20, offset: Offset(0, 10)),
+        decoration: BoxDecoration(
+          color: AppColors.accentContainer,
+          borderRadius: BorderRadius.circular(24),
+          border: Border.all(color: AppColors.outline),
+          boxShadow: const [
+            BoxShadow(color: Color(0x0A000000), blurRadius: 16, offset: Offset(0, 6)),
           ],
         ),
         child: Stack(children: [
           Positioned(top: -30, right: -20,
-              child: _Orb(size: 100, color: Colors.white.withValues(alpha: 0.10))),
+              child: _Orb(size: 100, color: Colors.white.withValues(alpha: 0.5))),
           Positioned(bottom: -30, left: -20,
-              child: _Orb(size: 90, color: Colors.white.withValues(alpha: 0.08))),
+              child: _Orb(size: 90, color: Colors.white.withValues(alpha: 0.4))),
 
           Column(crossAxisAlignment: CrossAxisAlignment.start, mainAxisSize: MainAxisSize.min, children: [
             Row(children: [
@@ -645,31 +644,32 @@ class _HeroSuggestionCardState extends State<_HeroSuggestionCard>
                   width: widget.floating ? 34 : 46,
                   height: widget.floating ? 34 : 46,
                   decoration: BoxDecoration(
-                    color: Colors.white.withValues(alpha: 0.15),
+                    color: Colors.white,
                     borderRadius: BorderRadius.circular(widget.floating ? 10 : 14),
+                    border: Border.all(color: AppColors.outline),
                   ),
                   alignment: Alignment.center,
                   child: Icon(Icons.auto_awesome_rounded,
-                      color: Colors.white, size: widget.floating ? 18 : 24),
+                      color: AppColors.textPrimary, size: widget.floating ? 18 : 24),
                 ),
               ),
               const SizedBox(width: 12),
               Expanded(
                 child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
                   Text('Hello, ${widget.userName}!',
-                      style: TextStyle(color: Colors.white, fontWeight: FontWeight.w800,
+                      style: TextStyle(color: AppColors.textPrimary, fontWeight: FontWeight.w800,
                           fontSize: widget.floating ? 15 : 19)),
                   Text(
                     widget.floating
                         ? 'Need another idea? Try one of these:'
                         : 'What legal question can I help with today?',
-                    style: TextStyle(color: Colors.white70, fontSize: widget.floating ? 11.5 : 13),
+                    style: TextStyle(color: AppColors.textSecondary, fontSize: widget.floating ? 11.5 : 13),
                   ),
                 ]),
               ),
               if (widget.onDismiss != null)
                 IconButton(
-                  icon: const Icon(Icons.close_rounded, color: Colors.white70, size: 18),
+                  icon: const Icon(Icons.close_rounded, color: AppColors.textSecondary, size: 18),
                   tooltip: 'Dismiss',
                   onPressed: widget.onDismiss,
                   padding: EdgeInsets.zero,
@@ -702,12 +702,12 @@ class _SuggestionChip extends StatelessWidget {
     child: Container(
       padding: EdgeInsets.symmetric(horizontal: compact ? 12 : 14, vertical: compact ? 8 : 10),
       decoration: BoxDecoration(
-        color: Colors.white.withValues(alpha: 0.14),
+        color: Colors.white,
         borderRadius: BorderRadius.circular(20),
-        border: Border.all(color: Colors.white.withValues(alpha: 0.3)),
+        border: Border.all(color: AppColors.outline),
       ),
       child: Text(text,
-          style: TextStyle(color: Colors.white, fontSize: compact ? 11.5 : 12.5,
+          style: TextStyle(color: AppColors.textPrimary, fontSize: compact ? 11.5 : 12.5,
               fontWeight: FontWeight.w600)),
     ),
   );

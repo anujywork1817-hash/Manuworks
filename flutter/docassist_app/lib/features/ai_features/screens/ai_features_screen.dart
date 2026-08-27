@@ -58,7 +58,15 @@ class AiFeaturesScreen extends StatelessWidget {
                       mainAxisAlignment: MainAxisAlignment.center,
                       mainAxisSize: MainAxisSize.min,
                       children: [
-                        Icon(f.icon, color: AppColors.textSecondary, size: 24),
+                        Container(
+                          width: 34, height: 34,
+                          decoration: BoxDecoration(
+                            color: f.color.withValues(alpha: 0.15),
+                            borderRadius: BorderRadius.circular(9),
+                          ),
+                          alignment: Alignment.center,
+                          child: Icon(f.icon, color: f.color, size: 18),
+                        ),
                         const SizedBox(height: 6),
                         Text(
                           f.label,

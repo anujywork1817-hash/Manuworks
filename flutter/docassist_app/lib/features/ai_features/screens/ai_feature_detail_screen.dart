@@ -41,21 +41,25 @@ class AiFeatureInfo {
   final String id;
   final IconData icon;
   final String label;
-  const AiFeatureInfo(this.id, this.icon, this.label);
+  // Distinct per-tool accent color (matches the colorful dashboard tiles,
+  // VS Code extension-icon style) — used for the icon badge, upload box
+  // border, and primary action button on this feature's own screen too.
+  final Color color;
+  const AiFeatureInfo(this.id, this.icon, this.label, this.color);
 }
 
 const kAiFeatures = [
-  AiFeatureInfo('summarize', Icons.summarize_outlined, 'Summarize'),
-  AiFeatureInfo('keypoints', Icons.list_outlined, 'Key Points'),
-  AiFeatureInfo('timeline', Icons.timeline_outlined, 'Timeline'),
-  AiFeatureInfo('actions', Icons.task_alt_outlined, 'Actions'),
-  AiFeatureInfo('analyze', Icons.analytics_outlined, 'Analyze'),
-  AiFeatureInfo('translate', Icons.translate_outlined, 'Translate'),
-  AiFeatureInfo('citations', Icons.gavel_outlined, 'Citations'),
-  AiFeatureInfo('risks', Icons.warning_amber_outlined, 'Risk Scan'),
-  AiFeatureInfo('deadlines', Icons.event_outlined, 'Deadlines'),
-  AiFeatureInfo('autotags', Icons.label_outlined, 'Auto-Tags'),
-  AiFeatureInfo('grammar', Icons.spellcheck_outlined, 'Grammar'),
+  AiFeatureInfo('summarize', Icons.summarize_outlined, 'Summarize', Color(0xFF2563EB)), // blue
+  AiFeatureInfo('keypoints', Icons.list_outlined, 'Key Points', Color(0xFFCA8A04)), // amber
+  AiFeatureInfo('timeline', Icons.timeline_outlined, 'Timeline', Color(0xFF0D9488)), // teal
+  AiFeatureInfo('actions', Icons.task_alt_outlined, 'Actions', Color(0xFF059669)), // emerald
+  AiFeatureInfo('analyze', Icons.analytics_outlined, 'Analyze', Color(0xFF4F46E5)), // indigo
+  AiFeatureInfo('translate', Icons.translate_outlined, 'Translate', Color(0xFF16A34A)), // green
+  AiFeatureInfo('citations', Icons.gavel_outlined, 'Citations', Color(0xFFDC2626)), // red
+  AiFeatureInfo('risks', Icons.warning_amber_outlined, 'Risk Scan', Color(0xFFD97706)), // orange
+  AiFeatureInfo('deadlines', Icons.event_outlined, 'Deadlines', Color(0xFFDB2777)), // pink
+  AiFeatureInfo('autotags', Icons.label_outlined, 'Auto-Tags', Color(0xFF7C3AED)), // purple
+  AiFeatureInfo('grammar', Icons.spellcheck_outlined, 'Grammar', Color(0xFF0891B2)), // cyan
 ];
 
 /// A screen dedicated to ONE AI feature (e.g. just "Summarize").
@@ -436,7 +440,15 @@ class _AiFeatureDetailScreenState extends ConsumerState<AiFeatureDetailScreen> {
     return Scaffold(
       appBar: AppBar(
         title: Row(mainAxisSize: MainAxisSize.min, children: [
-          Icon(_feature.icon, color: AppColors.accent, size: 20),
+          Container(
+            width: 28, height: 28,
+            decoration: BoxDecoration(
+              color: _feature.color.withValues(alpha: 0.15),
+              borderRadius: BorderRadius.circular(7),
+            ),
+            alignment: Alignment.center,
+            child: Icon(_feature.icon, color: _feature.color, size: 15),
+          ),
           const SizedBox(width: 8),
           Text(_feature.label),
         ]),
@@ -472,9 +484,23 @@ class _AiFeatureDetailScreenState extends ConsumerState<AiFeatureDetailScreen> {
     return ListView(
       padding: const EdgeInsets.all(AppSpacing.md),
       children: [
-        Text(title,
-            style: const TextStyle(fontSize: 22, fontWeight: FontWeight.bold,
-                color: AppColors.textPrimary)),
+        Row(children: [
+          Container(
+            width: 40, height: 40,
+            decoration: BoxDecoration(
+              color: _feature.color.withValues(alpha: 0.15),
+              borderRadius: BorderRadius.circular(10),
+            ),
+            alignment: Alignment.center,
+            child: Icon(_feature.icon, color: _feature.color, size: 20),
+          ),
+          const SizedBox(width: 10),
+          Expanded(
+            child: Text(title,
+                style: const TextStyle(fontSize: 22, fontWeight: FontWeight.bold,
+                    color: AppColors.textPrimary)),
+          ),
+        ]),
         const SizedBox(height: 6),
         if (subtitle.isNotEmpty)
           Text(subtitle, style: const TextStyle(fontSize: 13, color: AppColors.textSecondary)),
@@ -495,15 +521,21 @@ class _AiFeatureDetailScreenState extends ConsumerState<AiFeatureDetailScreen> {
             color: AppColors.surface,
             borderRadius: BorderRadius.circular(14),
             border: Border.all(
-              color: _selectedDoc != null ? AppColors.primary : AppColors.outline,
+              color: _selectedDoc != null ? _feature.color : AppColors.outline,
               width: _selectedDoc != null ? 1.5 : 1,
             ),
             boxShadow: AppShadows.sm,
           ),
           child: Column(children: [
             if (_selectedDoc == null) ...[
-              const Icon(Icons.cloud_upload_outlined, size: 40, color: AppColors.textTertiary),
-              const SizedBox(height: 12),
+              Container(
+                width: 64, height: 64,
+                decoration: BoxDecoration(
+                    color: _feature.color.withValues(alpha: 0.1), shape: BoxShape.circle),
+                alignment: Alignment.center,
+                child: Icon(Icons.cloud_upload_outlined, size: 32, color: _feature.color),
+              ),
+              const SizedBox(height: 14),
               const Text('Choose a file, drag and drop, or paste',
                   textAlign: TextAlign.center,
                   style: TextStyle(fontSize: 13, color: AppColors.textSecondary)),
@@ -511,17 +543,27 @@ class _AiFeatureDetailScreenState extends ConsumerState<AiFeatureDetailScreen> {
               Wrap(alignment: WrapAlignment.center, spacing: 10, runSpacing: 10, children: [
                 OutlinedButton.icon(
                   onPressed: _pickAndUpload,
-                  icon: const Icon(Icons.folder_open_outlined, size: 16),
-                  label: const Text('Browse'),
+                  icon: Icon(Icons.folder_open_outlined, size: 16, color: _feature.color),
+                  label: Text('Browse',
+                      style: TextStyle(color: _feature.color, fontWeight: FontWeight.w600)),
+                  style: OutlinedButton.styleFrom(side: BorderSide(color: _feature.color)),
                 ),
                 OutlinedButton.icon(
                   onPressed: _chooseFromRepository,
-                  icon: const Icon(Icons.inventory_2_outlined, size: 16),
-                  label: const Text('Choose from Repository'),
+                  icon: Icon(Icons.inventory_2_outlined, size: 16, color: _feature.color),
+                  label: Text('Choose from Repository',
+                      style: TextStyle(color: _feature.color, fontWeight: FontWeight.w600)),
+                  style: OutlinedButton.styleFrom(side: BorderSide(color: _feature.color)),
                 ),
               ]),
             ] else ...[
-              const Icon(Icons.description_outlined, size: 40, color: AppColors.primary),
+              Container(
+                width: 64, height: 64,
+                decoration: BoxDecoration(
+                    color: _feature.color.withValues(alpha: 0.1), shape: BoxShape.circle),
+                alignment: Alignment.center,
+                child: Icon(Icons.description_outlined, size: 32, color: _feature.color),
+              ),
               const SizedBox(height: 12),
               Text(_selectedDoc!.title,
                   maxLines: 2, overflow: TextOverflow.ellipsis, textAlign: TextAlign.center,
@@ -576,6 +618,7 @@ class _AiFeatureDetailScreenState extends ConsumerState<AiFeatureDetailScreen> {
             return ChoiceChip(
               label: Text(l),
               selected: selected,
+              selectedColor: _feature.color.withValues(alpha: 0.2),
               onSelected: _running ? null : (_) => setState(() => _selectedLanguage = l),
             );
           }).toList()),
@@ -588,7 +631,7 @@ class _AiFeatureDetailScreenState extends ConsumerState<AiFeatureDetailScreen> {
                   : () => _runTranslate(_selectedDoc!, _selectedLanguage!),
               style: ElevatedButton.styleFrom(
                 padding: const EdgeInsets.symmetric(vertical: 14),
-                backgroundColor: AppColors.primary,
+                backgroundColor: _feature.color,
                 shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
               ),
               child: _running
@@ -608,7 +651,7 @@ class _AiFeatureDetailScreenState extends ConsumerState<AiFeatureDetailScreen> {
               onPressed: (_selectedDoc == null || _running) ? null : _submit,
               style: ElevatedButton.styleFrom(
                 padding: const EdgeInsets.symmetric(vertical: 14),
-                backgroundColor: AppColors.primary,
+                backgroundColor: _feature.color,
                 shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
               ),
               child: _running

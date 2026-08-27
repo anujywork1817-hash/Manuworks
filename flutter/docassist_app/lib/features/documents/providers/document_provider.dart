@@ -120,8 +120,10 @@ class DocumentNotifier extends StateNotifier<DocumentsState> {
     }
   }
 
-  /// Upload from a PlatformFile — works on both web and mobile
-  Future<bool> uploadPlatformFile(PlatformFile file) async {
+  /// Upload from a PlatformFile — works on both web and mobile.
+  /// Returns the new document's id on success, or null on failure (check
+  /// `state.error` for the message).
+  Future<String?> uploadPlatformFile(PlatformFile file) async {
     state = state.copyWith(isUploading: true, uploadProgress: 0, error: null);
     try {
       MultipartFile multipartFile;
@@ -132,7 +134,7 @@ class DocumentNotifier extends StateNotifier<DocumentsState> {
         if (bytes == null) {
           state = state.copyWith(
               isUploading: false, error: 'Could not read file bytes');
-          return false;
+          return null;
         }
         multipartFile = MultipartFile.fromBytes(bytes, filename: file.name);
       } else {
@@ -141,7 +143,7 @@ class DocumentNotifier extends StateNotifier<DocumentsState> {
         if (path == null) {
           state = state.copyWith(
               isUploading: false, error: 'Could not read file path');
-          return false;
+          return null;
         }
         multipartFile = await MultipartFile.fromFile(path, filename: file.name);
       }
@@ -163,18 +165,18 @@ class DocumentNotifier extends StateNotifier<DocumentsState> {
         body: '${file.name} has been uploaded successfully.',
         type: 'upload',
       );
+      final docId =
+          (uploadResponse.data as Map?)?['data']?['id']?.toString() ?? '';
       // Auto-start background processing immediately after upload.
-      try {
-        final docId =
-            (uploadResponse.data as Map?)?['data']?['id']?.toString() ?? '';
-        if (docId.isNotEmpty) {
+      if (docId.isNotEmpty) {
+        try {
           await DioClient.post('/documents/$docId/process');
-        }
-      } catch (_) {}
-      return true;
+        } catch (_) {}
+      }
+      return docId.isNotEmpty ? docId : null;
     } catch (e) {
       state = state.copyWith(isUploading: false, error: e.toString());
-      return false;
+      return null;
     }
   }
 

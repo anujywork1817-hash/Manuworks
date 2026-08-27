@@ -1,5 +1,6 @@
 ﻿import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:file_picker/file_picker.dart';
 import '../../../core/network/dio_client.dart';
 import '../../../core/theme/app_theme.dart';
 import '../../documents/providers/document_provider.dart';
@@ -21,6 +22,11 @@ class _CompareScreenState extends ConsumerState<CompareScreen> {
   bool _comparing = false;
   Map<String, dynamic>? _result;
   String? _error;
+
+  // Which slot ('A' or 'B') is currently mid-upload, if any — drives the
+  // per-selector spinner while a freshly-picked file uploads and processes.
+  String? _uploadingSlot;
+  String? _uploadingStatus;
 
   @override
   void initState() {
@@ -77,6 +83,83 @@ class _CompareScreenState extends ConsumerState<CompareScreen> {
         });
       }
     }
+  }
+
+  /// Lets the user pick a file straight from their device (instead of
+  /// choosing from already-uploaded documents), uploads it, waits for
+  /// processing to finish (comparison needs the extracted text), and drops
+  /// the result into slot A or B.
+  Future<void> _uploadNewDocument(bool isDocA) async {
+    final result = await FilePicker.platform.pickFiles(
+      type: FileType.custom,
+      allowedExtensions: ['pdf', 'docx', 'doc', 'txt'],
+      withData: true, // required on mobile/desktop to get bytes for web-style upload; web always includes bytes
+    );
+    if (result == null || result.files.isEmpty) return;
+    final file = result.files.first;
+
+    setState(() {
+      _uploadingSlot = isDocA ? 'A' : 'B';
+      _uploadingStatus = 'Uploading...';
+      _error = null;
+    });
+
+    final docId =
+        await ref.read(documentProvider.notifier).uploadPlatformFile(file);
+    if (!mounted) return;
+    if (docId == null) {
+      setState(() {
+        _uploadingSlot = null;
+        _error = 'Upload failed: ${ref.read(documentProvider).error ?? file.name}';
+      });
+      return;
+    }
+
+    setState(() => _uploadingStatus = 'Processing...');
+
+    // Poll until the document is ready (or failed) — comparison needs the
+    // extracted text, so the freshly-uploaded file must finish OCR first.
+    Document? readyDoc;
+    for (int i = 0; i < 40; i++) {
+      await Future.delayed(Duration(seconds: i < 10 ? 2 : 4));
+      if (!mounted) return;
+      try {
+        final res = await DioClient.get('/documents/$docId');
+        final doc = Document.fromJson(res['data']);
+        if (doc.status == 'ready') {
+          readyDoc = doc;
+          break;
+        }
+        if (doc.status == 'failed') {
+          setState(() {
+            _uploadingSlot = null;
+            _error = '${file.name} failed to process.';
+          });
+          return;
+        }
+      } catch (_) {
+        // transient network hiccup — just try again next tick
+      }
+    }
+
+    if (!mounted) return;
+    if (readyDoc == null) {
+      setState(() {
+        _uploadingSlot = null;
+        _error = '${file.name} is taking longer than expected to process. '
+            'It will appear in "Choose from Documents" once ready.';
+      });
+      return;
+    }
+
+    setState(() {
+      _uploadingSlot = null;
+      if (isDocA) {
+        _doc1 = readyDoc;
+      } else {
+        _doc2 = readyDoc;
+      }
+    });
   }
 
   @override
@@ -154,6 +237,9 @@ class _CompareScreenState extends ConsumerState<CompareScreen> {
             docs: docs,
             excludeId: _doc2?.id,
             onSelected: (d) => setState(() => _doc1 = d),
+            onUploadNew: () => _uploadNewDocument(true),
+            uploading: _uploadingSlot == 'A',
+            uploadingStatus: _uploadingStatus,
           ),
 
           const SizedBox(height: 12),
@@ -186,6 +272,9 @@ class _CompareScreenState extends ConsumerState<CompareScreen> {
             docs: docs,
             excludeId: _doc1?.id,
             onSelected: (d) => setState(() => _doc2 = d),
+            onUploadNew: () => _uploadNewDocument(false),
+            uploading: _uploadingSlot == 'B',
+            uploadingStatus: _uploadingStatus,
           ),
 
           if (_error != null) ...[
@@ -344,10 +433,15 @@ class _DocSelector extends StatelessWidget {
   final List<Document> docs;
   final String? excludeId;
   final ValueChanged<Document> onSelected;
+  final VoidCallback onUploadNew;
+  final bool uploading;
+  final String? uploadingStatus;
 
   const _DocSelector({
     required this.label, required this.color, required this.selected,
-    required this.docs, required this.onSelected, this.excludeId,
+    required this.docs, required this.onSelected, required this.onUploadNew,
+    this.uploading = false, this.uploadingStatus,
+    this.excludeId,
   });
 
   @override
@@ -378,46 +472,59 @@ class _DocSelector extends StatelessWidget {
                     color: color, letterSpacing: 0.5)),
           ]),
         ),
-        if (selected != null)
+        if (uploading)
           Padding(
-            padding: const EdgeInsets.fromLTRB(14, 0, 14, 12),
+            padding: const EdgeInsets.fromLTRB(14, 0, 14, 14),
             child: Row(children: [
-              Container(
-                padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
-                decoration: BoxDecoration(
-                  color: color.withValues(alpha: 0.1),
-                  borderRadius: BorderRadius.circular(6),
-                ),
-                child: Text(selected!.fileType.toUpperCase(),
-                    style: TextStyle(fontSize: 10, fontWeight: FontWeight.bold, color: color)),
-              ),
-              const SizedBox(width: 8),
-              Expanded(child: Text(selected!.title,
-                  maxLines: 1, overflow: TextOverflow.ellipsis,
-                  style: const TextStyle(fontSize: 13, fontWeight: FontWeight.w600,
-                      color: AppColors.textPrimary))),
-              GestureDetector(
-                onTap: () => _showPicker(context, available),
-                child: Icon(Icons.swap_horiz_rounded, color: color, size: 20),
-              ),
+              SizedBox(width: 16, height: 16,
+                  child: CircularProgressIndicator(strokeWidth: 2, color: color)),
+              const SizedBox(width: 10),
+              Text(uploadingStatus ?? 'Uploading...',
+                  style: TextStyle(fontSize: 13, color: color, fontWeight: FontWeight.w500)),
             ]),
-          ),
-        if (selected == null)
-          InkWell(
-            onTap: () => _showPicker(context, available),
-            borderRadius: const BorderRadius.only(
-              bottomLeft: Radius.circular(14), bottomRight: Radius.circular(14)),
-            child: Padding(
-              padding: const EdgeInsets.fromLTRB(14, 0, 14, 14),
+          )
+        else ...[
+          if (selected != null)
+            Padding(
+              padding: const EdgeInsets.fromLTRB(14, 0, 14, 12),
               child: Row(children: [
-                Icon(Icons.add_circle_outline, color: color, size: 18),
+                Container(
+                  padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+                  decoration: BoxDecoration(
+                    color: color.withValues(alpha: 0.1),
+                    borderRadius: BorderRadius.circular(6),
+                  ),
+                  child: Text(selected!.fileType.toUpperCase(),
+                      style: TextStyle(fontSize: 10, fontWeight: FontWeight.bold, color: color)),
+                ),
                 const SizedBox(width: 8),
-                Text('Tap to select document',
-                    style: TextStyle(fontSize: 13, color: color,
-                        fontWeight: FontWeight.w500)),
+                Expanded(child: Text(selected!.title,
+                    maxLines: 1, overflow: TextOverflow.ellipsis,
+                    style: const TextStyle(fontSize: 13, fontWeight: FontWeight.w600,
+                        color: AppColors.textPrimary))),
+                GestureDetector(
+                  onTap: () => _showPicker(context, available),
+                  child: Icon(Icons.swap_horiz_rounded, color: color, size: 20),
+                ),
               ]),
             ),
-          ),
+          if (selected == null)
+            InkWell(
+              onTap: () => _showPicker(context, available),
+              borderRadius: const BorderRadius.only(
+                bottomLeft: Radius.circular(14), bottomRight: Radius.circular(14)),
+              child: Padding(
+                padding: const EdgeInsets.fromLTRB(14, 0, 14, 14),
+                child: Row(children: [
+                  Icon(Icons.add_circle_outline, color: color, size: 18),
+                  const SizedBox(width: 8),
+                  Text('Tap to select document',
+                      style: TextStyle(fontSize: 13, color: color,
+                          fontWeight: FontWeight.w500)),
+                ]),
+              ),
+            ),
+        ],
       ]),
     );
   }
@@ -432,6 +539,7 @@ class _DocSelector extends StatelessWidget {
         color: color,
         label: label,
         onSelected: onSelected,
+        onUploadNew: onUploadNew,
       ),
     );
   }
@@ -444,7 +552,9 @@ class _DocPickerSheet extends StatefulWidget {
   final Color color;
   final String label;
   final ValueChanged<Document> onSelected;
+  final VoidCallback onUploadNew;
   const _DocPickerSheet({required this.docs, required this.color,
+      required this.onUploadNew,
       required this.label, required this.onSelected});
 
   @override
@@ -488,6 +598,35 @@ class _DocPickerSheetState extends State<_DocPickerSheet> {
               Text('Select ${widget.label}',
                   style: const TextStyle(fontSize: 15, fontWeight: FontWeight.bold,
                       color: AppColors.textPrimary)),
+            ]),
+          ),
+          Padding(
+            padding: const EdgeInsets.fromLTRB(16, 4, 16, 10),
+            child: OutlinedButton.icon(
+              onPressed: () {
+                Navigator.pop(context);
+                widget.onUploadNew();
+              },
+              icon: Icon(Icons.upload_file_rounded, size: 17, color: widget.color),
+              label: Text('Upload from device (PC / Mobile)',
+                  style: TextStyle(fontSize: 13, color: widget.color, fontWeight: FontWeight.w600)),
+              style: OutlinedButton.styleFrom(
+                padding: const EdgeInsets.symmetric(vertical: 12),
+                side: BorderSide(color: widget.color.withValues(alpha: 0.4)),
+                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+              ),
+            ),
+          ),
+          Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+            child: Row(children: [
+              Expanded(child: Divider(color: Colors.grey.shade300)),
+              Padding(
+                padding: const EdgeInsets.symmetric(horizontal: 10),
+                child: Text('or choose an existing document',
+                    style: TextStyle(fontSize: 11, color: AppColors.textTertiary)),
+              ),
+              Expanded(child: Divider(color: Colors.grey.shade300)),
             ]),
           ),
           Padding(

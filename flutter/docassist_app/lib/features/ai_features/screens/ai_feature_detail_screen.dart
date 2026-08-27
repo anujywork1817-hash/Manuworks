@@ -109,10 +109,10 @@ class _AiFeatureDetailScreenState extends ConsumerState<AiFeatureDetailScreen> {
     );
     if (result == null || result.files.isEmpty) return;
     final file = result.files.first;
-    final success =
+    final newDocId =
         await ref.read(documentProvider.notifier).uploadPlatformFile(file);
     if (!mounted) return;
-    if (success) {
+    if (newDocId != null) {
       final docs = ref.read(documentProvider).documents;
       if (docs.isNotEmpty) {
         setState(() => _selectedDoc = docs.first);

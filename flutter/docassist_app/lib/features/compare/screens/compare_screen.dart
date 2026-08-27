@@ -7,6 +7,7 @@ import '../../documents/providers/document_provider.dart';
 import '../../../core/services/ai_history_service.dart';
 import '../../../shared/widgets/feature_history_sheet.dart';
 import '../../../shared/widgets/fun_loading_word.dart';
+import '../../../core/services/document_export_service.dart';
 
 // ─── Screen ───────────────────────────────────────────────────────────────────
 
@@ -322,6 +323,61 @@ class _CompareScreenState extends ConsumerState<CompareScreen> {
 
   // ── Result view ──────────────────────────────────────────────────────────────
 
+  String _reportText(List<Map<String, dynamic>> diffs, String summary, String verdict) {
+    final buf = StringBuffer()
+      ..writeln('# Document Comparison')
+      ..writeln('${_doc1?.title ?? 'Document A'} vs ${_doc2?.title ?? 'Document B'}')
+      ..writeln()
+      ..writeln('## Summary')
+      ..writeln(summary)
+      ..writeln();
+    if (diffs.isNotEmpty) {
+      buf.writeln('## Differences');
+      for (final d in diffs) {
+        buf.writeln('- ${d['description'] ?? d.toString()}');
+      }
+      buf.writeln();
+    }
+    if (verdict.isNotEmpty) {
+      buf.writeln('## Key Takeaway');
+      buf.writeln(verdict);
+    }
+    return buf.toString();
+  }
+
+  Future<void> _handleExport(
+    Future<void> Function() action, {
+    required String busyMessage,
+    required String doneMessage,
+  }) async {
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(content: Text(busyMessage), duration: const Duration(seconds: 2)),
+    );
+    try {
+      await action();
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(doneMessage)));
+    } catch (e) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Failed: $e'), backgroundColor: AppColors.error));
+    }
+  }
+
+  Future<void> _exportPdf(String content) => _handleExport(
+        () => DocumentExportService.exportReportToPdf(
+            title: 'Document Comparison', content: content),
+        busyMessage: 'Preparing PDF...',
+        doneMessage: 'PDF ready to save or share',
+      );
+
+  Future<void> _exportDocx(String content) => _handleExport(
+        () => DocumentExportService.exportReportToDocx(
+            title: 'Document Comparison', content: content),
+        busyMessage: 'Preparing Word file...',
+        doneMessage: 'DOCX ready to save or share',
+      );
+
   Widget _buildResult() {
     final diffs = (_result!['differences'] as List? ?? [])
         .cast<Map<String, dynamic>>();
@@ -367,6 +423,17 @@ class _CompareScreenState extends ConsumerState<CompareScreen> {
                         ? AppColors.success
                         : AppColors.warning,
                   )),
+            ),
+            const Spacer(),
+            IconButton(
+              icon: const Icon(Icons.picture_as_pdf_outlined, size: 18),
+              tooltip: 'Export as PDF',
+              onPressed: () => _exportPdf(_reportText(diffs, summary, verdict)),
+            ),
+            IconButton(
+              icon: const Icon(Icons.description_outlined, size: 18),
+              tooltip: 'Export as Word (DOCX)',
+              onPressed: () => _exportDocx(_reportText(diffs, summary, verdict)),
             ),
           ]),
 

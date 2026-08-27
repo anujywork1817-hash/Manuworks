@@ -6,6 +6,7 @@ import '../../../core/network/dio_client.dart';
 import '../../../core/theme/app_theme.dart';
 import '../../../core/services/ai_history_service.dart';
 import '../../../core/services/clipboard_helper.dart';
+import '../../../core/services/document_export_service.dart';
 import '../../../shared/widgets/feature_history_sheet.dart';
 import '../../../shared/widgets/fun_loading_word.dart';
 
@@ -98,6 +99,40 @@ class _OcrScanScreenState extends State<OcrScanScreen> {
       }
     }
   }
+
+  Future<void> _handleExport(
+    Future<void> Function() action, {
+    required String busyMessage,
+    required String doneMessage,
+  }) async {
+    if (_text == null) return;
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(content: Text(busyMessage), duration: const Duration(seconds: 2)),
+    );
+    try {
+      await action();
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(doneMessage)));
+    } catch (e) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Failed: $e'), backgroundColor: AppColors.error));
+    }
+  }
+
+  Future<void> _exportPdf() => _handleExport(
+        () => DocumentExportService.exportReportToPdf(
+            title: 'OCR Scan — ${_image?.name ?? 'Result'}', content: _text!),
+        busyMessage: 'Preparing PDF...',
+        doneMessage: 'PDF ready to save or share',
+      );
+
+  Future<void> _exportDocx() => _handleExport(
+        () => DocumentExportService.exportReportToDocx(
+            title: 'OCR Scan — ${_image?.name ?? 'Result'}', content: _text!),
+        busyMessage: 'Preparing Word file...',
+        doneMessage: 'DOCX ready to save or share',
+      );
 
   @override
   Widget build(BuildContext context) {
@@ -251,6 +286,16 @@ class _OcrScanScreenState extends State<OcrScanScreen> {
         _stat('Confidence', '${_confidence.toStringAsFixed(0)}%',
             _confidence >= 80 ? AppColors.success : AppColors.warning),
         const Spacer(),
+        IconButton(
+          icon: const Icon(Icons.picture_as_pdf_outlined, size: 18),
+          tooltip: 'Export as PDF',
+          onPressed: _exportPdf,
+        ),
+        IconButton(
+          icon: const Icon(Icons.description_outlined, size: 18),
+          tooltip: 'Export as Word (DOCX)',
+          onPressed: _exportDocx,
+        ),
         OutlinedButton.icon(
           onPressed: () {
             copyToClipboard(_text!);

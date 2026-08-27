@@ -74,6 +74,16 @@ class _AiFeatureDetailScreenState extends ConsumerState<AiFeatureDetailScreen> {
   bool _running = false;
   String? _result;
   String? _error;
+  // Only used by the 'translate' feature: the language picked after the
+  // document has finished processing (translation has no meaning before
+  // that, so there's nothing to pick until then).
+  String? _selectedLanguage;
+
+  static const _languages = [
+    'Hindi', 'Marathi', 'Tamil', 'Telugu', 'Bengali', 'Gujarati', 'Kannada',
+    'Malayalam', 'Punjabi', 'Urdu', 'English', 'Spanish', 'French', 'German',
+    'Arabic', 'Chinese',
+  ];
 
   AiFeatureInfo get _feature =>
       kAiFeatures.firstWhere((f) => f.id == widget.featureId,
@@ -116,7 +126,7 @@ class _AiFeatureDetailScreenState extends ConsumerState<AiFeatureDetailScreen> {
     if (newDocId != null) {
       final docs = ref.read(documentProvider).documents;
       if (docs.isNotEmpty) {
-        setState(() => _selectedDoc = docs.first);
+        setState(() { _selectedDoc = docs.first; _selectedLanguage = null; });
       }
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(content: Text('${file.name} uploaded! Processing...')),
@@ -192,64 +202,53 @@ class _AiFeatureDetailScreenState extends ConsumerState<AiFeatureDetailScreen> {
     return current;
   }
 
-  Future<String?> _pickLanguage() async {
-    const languages = [
-      'Hindi', 'Marathi', 'Tamil', 'Telugu', 'Bengali', 'Gujarati', 'Kannada',
-      'Malayalam', 'Punjabi', 'Urdu', 'English', 'Spanish', 'French', 'German',
-      'Arabic', 'Chinese',
-    ];
-    return showModalBottomSheet<String>(
-      context: context,
-      shape: const RoundedRectangleBorder(
-        borderRadius: BorderRadius.vertical(top: Radius.circular(16)),
-      ),
-      builder: (context) => SafeArea(
-        child: Column(mainAxisSize: MainAxisSize.min, children: [
-          const SizedBox(height: 12),
-          Container(width: 40, height: 4,
-              decoration: BoxDecoration(color: Colors.grey.shade300,
-                  borderRadius: BorderRadius.circular(2))),
-          const SizedBox(height: 16),
-          const Text('Translate to', style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold)),
-          const SizedBox(height: 8),
-          Flexible(
-            child: ListView(
-              shrinkWrap: true,
-              children: languages.map((l) => ListTile(
-                title: Text(l),
-                onTap: () => Navigator.pop(context, l),
-              )).toList(),
-            ),
-          ),
-          const SizedBox(height: 16),
-        ]),
-      ),
-    );
+  /// Processes the document only — used by 'translate', where the language
+  /// picker (and the actual translation) only appears once processing is
+  /// done, instead of being bundled into one "Submit" step.
+  Future<void> _processOnly(Document doc) async {
+    setState(() { _running = true; _error = null; _result = null; });
+    try {
+      if (doc.status != 'processing') {
+        await ref.read(aiProvider.notifier).processDocument(doc.id);
+      }
+      final current = await _pollUntilReady(doc);
+      if (!mounted) return;
+      if (current.isProcessed || current.status == 'ready') {
+        setState(() { _selectedDoc = current; _running = false; });
+        unawaited(ref.read(documentProvider.notifier).loadDocuments());
+      } else {
+        setState(() {
+          _running = false;
+          _selectedDoc = current; // remember status='processing' so retry doesn't restart it
+          _error = 'Still processing large document — this can take a few minutes for '
+              'long or scanned files. Tap Process to keep checking.';
+        });
+      }
+    } catch (e) {
+      if (mounted) setState(() { _running = false; _error = 'Processing failed: $e'; });
+    }
+  }
+
+  Future<void> _runTranslate(Document doc, String lang) async {
+    setState(() { _running = true; _error = null; _result = null; });
+    try {
+      final result =
+          await ref.read(aiProvider.notifier).translateDocument(doc.id, lang);
+      await _saveResult(doc.id, result);
+      await AiHistoryService.save(
+        featureId: _feature.id,
+        title: '${_feature.label} · ${doc.title}',
+        subtitle: doc.title,
+        content: result,
+      );
+      await UsageTracker.logUsage(_feature.id);
+      if (mounted) setState(() { _result = result; _running = false; });
+    } catch (e) {
+      if (mounted) setState(() { _error = _friendlyError(e); _running = false; });
+    }
   }
 
   Future<void> _runFeature(Document doc) async {
-    if (_feature.id == 'translate') {
-      final lang = await _pickLanguage();
-      if (lang == null) { setState(() => _running = false); return; }
-      setState(() { _running = true; _error = null; _result = null; });
-      try {
-        final result =
-            await ref.read(aiProvider.notifier).translateDocument(doc.id, lang);
-        await _saveResult(doc.id, result);
-        await AiHistoryService.save(
-          featureId: _feature.id,
-          title: '${_feature.label} · ${doc.title}',
-          subtitle: doc.title,
-          content: result,
-        );
-        await UsageTracker.logUsage(_feature.id);
-        if (mounted) setState(() { _result = result; _running = false; });
-      } catch (e) {
-        if (mounted) setState(() { _error = _friendlyError(e); _running = false; });
-      }
-      return;
-    }
-
     setState(() { _running = true; _error = null; _result = null; });
     try {
       final notifier = ref.read(aiProvider.notifier);
@@ -404,13 +403,21 @@ class _AiFeatureDetailScreenState extends ConsumerState<AiFeatureDetailScreen> {
       ),
     );
     if (doc != null) {
-      setState(() { _selectedDoc = doc; _result = null; _error = null; });
+      setState(() { _selectedDoc = doc; _result = null; _error = null; _selectedLanguage = null; });
     }
   }
 
   void _submit() {
     if (_selectedDoc == null) return;
     final doc = _selectedDoc!;
+    if (_feature.id == 'translate') {
+      // Translate never runs from this button — only processing does. Once
+      // the doc is ready, the language picker + Translate action take over.
+      if (!(doc.isProcessed || doc.status == 'ready')) {
+        _processOnly(doc);
+      }
+      return;
+    }
     if (doc.isProcessed || doc.status == 'ready') {
       _runFeature(doc);
     } else {
@@ -436,7 +443,7 @@ class _AiFeatureDetailScreenState extends ConsumerState<AiFeatureDetailScreen> {
           if (_result != null)
             TextButton.icon(
               onPressed: () => setState(() {
-                _result = null; _error = null; _selectedDoc = null;
+                _result = null; _error = null; _selectedDoc = null; _selectedLanguage = null;
               }),
               icon: const Icon(Icons.refresh_rounded, size: 16),
               label: const Text('New'),
@@ -522,13 +529,14 @@ class _AiFeatureDetailScreenState extends ConsumerState<AiFeatureDetailScreen> {
               const SizedBox(height: 4),
               Text(
                 _selectedDoc!.isProcessed || _selectedDoc!.status == 'ready'
-                    ? 'AI ready' : 'Will be processed on submit',
+                    ? (_feature.id == 'translate' ? 'Ready — pick a language below' : 'AI ready')
+                    : (_feature.id == 'translate' ? 'Tap Process Document to continue' : 'Will be processed on submit'),
                 style: const TextStyle(fontSize: 12, color: AppColors.textSecondary),
               ),
               const SizedBox(height: 12),
               TextButton(
                 onPressed: () => setState(() {
-                  _selectedDoc = null; _result = null; _error = null;
+                  _selectedDoc = null; _result = null; _error = null; _selectedLanguage = null;
                 }),
                 child: const Text('Change file'),
               ),
@@ -553,25 +561,65 @@ class _AiFeatureDetailScreenState extends ConsumerState<AiFeatureDetailScreen> {
         ],
 
         const SizedBox(height: 24),
-        SizedBox(
-          width: double.infinity,
-          child: ElevatedButton(
-            onPressed: (_selectedDoc == null || _running) ? null : _submit,
-            style: ElevatedButton.styleFrom(
-              padding: const EdgeInsets.symmetric(vertical: 14),
-              backgroundColor: AppColors.primary,
-              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+        if (_feature.id == 'translate' &&
+            _selectedDoc != null &&
+            (_selectedDoc!.isProcessed || _selectedDoc!.status == 'ready')) ...[
+          // Document is processed — now (and only now) does language
+          // selection make sense.
+          const Text('Translate to',
+              style: TextStyle(fontSize: 14, fontWeight: FontWeight.w600,
+                  color: AppColors.textPrimary)),
+          const SizedBox(height: 10),
+          Wrap(spacing: 8, runSpacing: 8, children: _languages.map((l) {
+            final selected = _selectedLanguage == l;
+            return ChoiceChip(
+              label: Text(l),
+              selected: selected,
+              onSelected: _running ? null : (_) => setState(() => _selectedLanguage = l),
+            );
+          }).toList()),
+          const SizedBox(height: 20),
+          SizedBox(
+            width: double.infinity,
+            child: ElevatedButton(
+              onPressed: (_selectedLanguage == null || _running)
+                  ? null
+                  : () => _runTranslate(_selectedDoc!, _selectedLanguage!),
+              style: ElevatedButton.styleFrom(
+                padding: const EdgeInsets.symmetric(vertical: 14),
+                backgroundColor: AppColors.primary,
+                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+              ),
+              child: _running
+                  ? Row(mainAxisSize: MainAxisSize.min, children: [
+                      const SizedBox(width: 18, height: 18,
+                          child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white)),
+                      const SizedBox(width: 10),
+                      FunLoadingWord(style: const TextStyle(color: Colors.white, fontWeight: FontWeight.w600)),
+                    ])
+                  : const Text('Translate'),
             ),
-            child: _running
-                ? Row(mainAxisSize: MainAxisSize.min, children: [
-                    const SizedBox(width: 18, height: 18,
-                        child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white)),
-                    const SizedBox(width: 10),
-                    FunLoadingWord(style: const TextStyle(color: Colors.white, fontWeight: FontWeight.w600)),
-                  ])
-                : const Text('Submit'),
           ),
-        ),
+        ] else
+          SizedBox(
+            width: double.infinity,
+            child: ElevatedButton(
+              onPressed: (_selectedDoc == null || _running) ? null : _submit,
+              style: ElevatedButton.styleFrom(
+                padding: const EdgeInsets.symmetric(vertical: 14),
+                backgroundColor: AppColors.primary,
+                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+              ),
+              child: _running
+                  ? Row(mainAxisSize: MainAxisSize.min, children: [
+                      const SizedBox(width: 18, height: 18,
+                          child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white)),
+                      const SizedBox(width: 10),
+                      FunLoadingWord(style: const TextStyle(color: Colors.white, fontWeight: FontWeight.w600)),
+                    ])
+                  : Text(_feature.id == 'translate' ? 'Process Document' : 'Submit'),
+            ),
+          ),
         const SizedBox(height: 24),
       ],
     );

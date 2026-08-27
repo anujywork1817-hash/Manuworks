@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net"
@@ -11,27 +12,63 @@ import (
 	"regexp"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
+
+	"github.com/anthropics/anthropic-sdk-go"
+	"github.com/anthropics/anthropic-sdk-go/option"
+
+	"github.com/yourusername/docassist/pkg/logger"
 )
 
 const (
-	baseURL        = "https://api.groq.com/openai/v1/chat/completions"
-	defaultModel   = "llama-3.1-8b-instant" // 500K TPD vs 100K for 70b-versatile
-	defaultTimeout = 60 * time.Second
+	baseURL            = "https://api.groq.com/openai/v1/chat/completions"
+	defaultModel       = "llama-3.1-8b-instant" // 500K TPD vs 100K for 70b-versatile
+	defaultClaudeModel = "claude-opus-5"
+	defaultTimeout     = 60 * time.Second
+
+	// indiaDocEngRule is appended to every document-analysis system prompt so
+	// the model always replies in English even when the source document is
+	// written in Marathi, Hindi, or another Indian regional language.
+	indiaDocEngRule = " The document may be in any Indian language (Marathi, Hindi, etc.) — always respond ENTIRELY IN ENGLISH."
 )
 
-// Client is the Groq API client
-type Client struct {
-	apiKey     string
-	model      string
-	httpClient *http.Client
+// groqKeySlot tracks one Groq API key and its daily-limit cooldown.
+type groqKeySlot struct {
+	key           string
+	cooldownUntil time.Time
 }
 
-// Config holds Groq configuration
+// Client talks to Claude (primary) and Groq (secondary/fallback). Every
+// public method tries Claude first; if Claude is unset, rate-limited, or
+// out of quota, it transparently falls back to Groq until Claude's limit
+// is expected to have reset.
+//
+// Multiple Groq keys are supported. When one key exhausts its daily token
+// quota it is marked cooling-down and the next key is used automatically —
+// so one key hitting its daily limit does NOT block every user in the app.
+type Client struct {
+	groqKeys   []groqKeySlot // All Groq API keys; first is primary
+	model      string
+	httpClient *http.Client
+
+	claudeClient *anthropic.Client
+	claudeModel  string
+	claudeOn     bool
+
+	mu                  sync.Mutex
+	claudeCooldownUntil time.Time
+}
+
+// Config holds Groq + Claude configuration
 type Config struct {
-	APIKey  string
+	APIKey  string   // Primary Groq API key
+	APIKeys []string // Additional Groq keys for rotation (GROQ_API_KEY_2 … _5)
 	Model   string
 	Timeout time.Duration
+
+	ClaudeAPIKey string
+	ClaudeModel  string
 }
 
 // --- Request/Response types ---
@@ -56,6 +93,7 @@ type chatResponse struct {
 	} `json:"choices"`
 	Error *struct {
 		Message string `json:"message"`
+		Code    string `json:"code,omitempty"`
 	} `json:"error,omitempty"`
 }
 
@@ -131,9 +169,23 @@ func NewClient(cfg *Config) *Client {
 	if model == "" {
 		model = defaultModel
 	}
+	claudeModel := cfg.ClaudeModel
+	if claudeModel == "" {
+		claudeModel = defaultClaudeModel
+	}
 	timeout := cfg.Timeout
 	if timeout == 0 {
 		timeout = defaultTimeout
+	}
+	// Build key pool: primary key first, then extras. Skip blank entries.
+	var slots []groqKeySlot
+	if cfg.APIKey != "" {
+		slots = append(slots, groqKeySlot{key: cfg.APIKey})
+	}
+	for _, k := range cfg.APIKeys {
+		if k != "" {
+			slots = append(slots, groqKeySlot{key: k})
+		}
 	}
 	// Force IPv4 to avoid IPv6 connectivity issues on networks where
 	// IPv6 routing to Groq's CDN (Cloudflare) is broken.
@@ -142,11 +194,63 @@ func NewClient(cfg *Config) *Client {
 			return (&net.Dialer{Timeout: 30 * time.Second, KeepAlive: 30 * time.Second}).DialContext(ctx, "tcp4", addr)
 		},
 	}
-	return &Client{
-		apiKey:     cfg.APIKey,
-		model:      model,
-		httpClient: &http.Client{Timeout: timeout, Transport: transport},
+	var claudeClient *anthropic.Client
+	if cfg.ClaudeAPIKey != "" {
+		cc := anthropic.NewClient(option.WithAPIKey(cfg.ClaudeAPIKey))
+		claudeClient = &cc
 	}
+
+	return &Client{
+		groqKeys:     slots,
+		model:        model,
+		claudeClient: claudeClient,
+		claudeModel:  claudeModel,
+		claudeOn:     cfg.ClaudeAPIKey != "",
+		httpClient:   &http.Client{Timeout: timeout, Transport: transport},
+	}
+}
+
+// activeGroqKey returns the first Groq key that is not in a daily-limit
+// cooldown, and its index. Returns "", -1 if all keys are exhausted.
+func (c *Client) activeGroqKey() (string, int) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	now := time.Now()
+	for i, slot := range c.groqKeys {
+		if now.After(slot.cooldownUntil) {
+			return slot.key, i
+		}
+	}
+	return "", -1
+}
+
+// cooldownGroqKey marks key at index i as exhausted until `until`.
+func (c *Client) cooldownGroqKey(i int, until time.Time) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if i >= 0 && i < len(c.groqKeys) {
+		c.groqKeys[i].cooldownUntil = until
+	}
+}
+
+// claudeAvailable reports whether Claude is configured and not currently
+// in a rate-limit cooldown.
+func (c *Client) claudeAvailable() bool {
+	if !c.claudeOn {
+		return false
+	}
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return time.Now().After(c.claudeCooldownUntil)
+}
+
+// setClaudeCooldown skips Claude for the given duration, e.g. after it
+// returns a rate-limit/quota error, so subsequent calls go straight to
+// Groq instead of failing against Claude first every time.
+func (c *Client) setClaudeCooldown(d time.Duration) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.claudeCooldownUntil = time.Now().Add(d)
 }
 
 // parseRetryAfter parses "try again in 33m14.976s" or "try again in 1.5s".
@@ -179,39 +283,138 @@ func formatWait(d time.Duration) string {
 
 // --- Core API call ---
 
+// generate tries Claude (primary) first, then falls back to Groq
+// (secondary) if Claude is unset, rate-limited, or out of quota.
 func (c *Client) generate(ctx context.Context, systemPrompt, userPrompt string, maxTokens int) (string, error) {
+	msgs := []message{
+		{Role: "system", Content: systemPrompt},
+		{Role: "user", Content: userPrompt},
+	}
+
+	if c.claudeAvailable() {
+		result, retryAfter, err := c.doClaudeRequest(ctx, systemPrompt, msgs, maxTokens)
+		if err == nil {
+			logger.Debug("AI request served by Claude")
+			return result, nil
+		}
+		if retryAfter > 0 {
+			c.setClaudeCooldown(retryAfter)
+			logger.Warn("Claude rate-limited, switching to Groq until it resets",
+				logger.Err(err), logger.Str("resume_at", time.Now().Add(retryAfter).Format(time.RFC3339)))
+		} else {
+			logger.Warn("Claude request failed, falling back to Groq for this request", logger.Err(err))
+		}
+		// Fall through to Groq for this request.
+	}
+
+	return c.generateGroq(ctx, msgs, maxTokens)
+}
+
+// generateGroq calls Groq with retry/backoff and automatic key rotation.
+// When a key hits its daily token quota it is marked cooling-down and the
+// next available key is tried — so a single exhausted key does NOT surface
+// "Daily AI limit" to every user in the app.
+func (c *Client) generateGroq(ctx context.Context, msgs []message, maxTokens int) (string, error) {
 	const maxRetries = 2
+
 	for attempt := 0; attempt <= maxRetries; attempt++ {
-		result, retryAfter, err := c.doGenerate(ctx, systemPrompt, userPrompt, maxTokens)
+		key, idx := c.activeGroqKey()
+		if key == "" {
+			return "", fmt.Errorf("AI service is temporarily unavailable (all API keys have reached their daily quota). Please try again in a few hours.")
+		}
+
+		result, retryAfter, err := c.doRequest(ctx, baseURL, key, c.model, msgs, maxTokens, 0.3)
 		if err == nil {
 			return result, nil
 		}
-		if retryAfter > 0 && attempt < maxRetries {
-			// Daily token limit — don't wait, surface a clear message
+
+		if retryAfter > 0 {
 			if retryAfter > 2*time.Minute {
-				return "", fmt.Errorf("Daily AI token limit reached. Please try again in %s.", formatWait(retryAfter))
-			}
-			select {
-			case <-ctx.Done():
-				return "", ctx.Err()
-			case <-time.After(retryAfter):
+				// Daily token quota on this key — cool it down and try the next key.
+				c.cooldownGroqKey(idx, time.Now().Add(retryAfter))
+				logger.Warn("Groq key daily limit hit, rotating to next key",
+					logger.Int("key_index", idx),
+					logger.Str("retry_in", formatWait(retryAfter)),
+				)
+				// Don't increment attempt — immediately retry with the next key.
 				continue
+			}
+			if attempt < maxRetries {
+				// Short rate-limit (per-minute): wait and retry same key.
+				select {
+				case <-ctx.Done():
+					return "", ctx.Err()
+				case <-time.After(retryAfter):
+					continue
+				}
 			}
 		}
 		return "", err
 	}
-	return "", fmt.Errorf("max retries exceeded")
+	return "", fmt.Errorf("AI service is busy, please try again in a moment.")
 }
 
-func (c *Client) doGenerate(ctx context.Context, systemPrompt, userPrompt string, maxTokens int) (string, time.Duration, error) {
+// doClaudeRequest performs a single Messages API call against Claude via the
+// official Anthropic SDK. systemPrompt is sent as the top-level system
+// field; msgs[1:] (skipping the leading system-role entry callers build for
+// the Groq/OpenAI-style message list) becomes the conversation turns. The
+// returned duration is non-zero only when Claude signalled a rate limit,
+// so callers know how long to skip Claude and use Groq instead.
+func (c *Client) doClaudeRequest(ctx context.Context, systemPrompt string, msgs []message, maxTokens int) (string, time.Duration, error) {
+	var turns []anthropic.MessageParam
+	for _, m := range msgs {
+		if m.Role == "system" {
+			continue
+		}
+		block := anthropic.NewTextBlock(m.Content)
+		if m.Role == "assistant" {
+			turns = append(turns, anthropic.NewAssistantMessage(block))
+		} else {
+			turns = append(turns, anthropic.NewUserMessage(block))
+		}
+	}
+
+	resp, err := c.claudeClient.Messages.New(ctx, anthropic.MessageNewParams{
+		Model:     anthropic.Model(c.claudeModel),
+		MaxTokens: int64(maxTokens),
+		System:    []anthropic.TextBlockParam{{Text: systemPrompt}},
+		Messages:  turns,
+		// These are short, formulaic extraction/summarization calls, not hard
+		// reasoning tasks — low effort keeps adaptive thinking on (avoiding the
+		// tool-call-leaks-into-text failure mode of disabling it outright) while
+		// cutting latency substantially versus the "high" default.
+		OutputConfig: anthropic.OutputConfigParam{Effort: anthropic.OutputConfigEffortLow},
+	})
+	if err != nil {
+		var apiErr *anthropic.Error
+		if errors.As(err, &apiErr) && apiErr.StatusCode == 429 {
+			return "", 60 * time.Second, fmt.Errorf("claude rate limit: %w", err)
+		}
+		return "", 0, fmt.Errorf("claude request: %w", err)
+	}
+
+	var text strings.Builder
+	for _, block := range resp.Content {
+		if tb, ok := block.AsAny().(anthropic.TextBlock); ok {
+			text.WriteString(tb.Text)
+		}
+	}
+	if text.Len() == 0 {
+		return "", 0, fmt.Errorf("claude: empty response")
+	}
+	return text.String(), 0, nil
+}
+
+// doRequest performs a single chat-completion call against the given
+// provider endpoint (Groq). The returned duration is non-zero only when the
+// provider signalled a rate limit (HTTP 429), so callers know how long to
+// back off before retrying.
+func (c *Client) doRequest(ctx context.Context, url, apiKey, model string, msgs []message, maxTokens int, temperature float64) (string, time.Duration, error) {
 	reqBody := chatRequest{
-		Model: c.model,
-		Messages: []message{
-			{Role: "system", Content: systemPrompt},
-			{Role: "user", Content: userPrompt},
-		},
+		Model:       model,
+		Messages:    msgs,
 		MaxTokens:   maxTokens,
-		Temperature: 0.3,
+		Temperature: temperature,
 	}
 
 	body, err := json.Marshal(reqBody)
@@ -219,11 +422,11 @@ func (c *Client) doGenerate(ctx context.Context, systemPrompt, userPrompt string
 		return "", 0, fmt.Errorf("marshal request: %w", err)
 	}
 
-	req, err := http.NewRequestWithContext(ctx, "POST", baseURL, bytes.NewReader(body))
+	req, err := http.NewRequestWithContext(ctx, "POST", url, bytes.NewReader(body))
 	if err != nil {
 		return "", 0, fmt.Errorf("create request: %w", err)
 	}
-	req.Header.Set("Authorization", "Bearer "+c.apiKey)
+	req.Header.Set("Authorization", "Bearer "+apiKey)
 	req.Header.Set("Content-Type", "application/json")
 
 	resp, err := c.httpClient.Do(req)
@@ -246,16 +449,51 @@ func (c *Client) doGenerate(ctx context.Context, systemPrompt, userPrompt string
 		msg := chatResp.Error.Message
 		if resp.StatusCode == 429 {
 			wait := parseRetryAfter(msg)
-			return "", wait, fmt.Errorf("groq rate limit: %s", msg)
+			// Hard billing/quota limit — no "try again in Xs" hint in the
+			// message, so don't hammer it; recheck again in an hour.
+			if chatResp.Error.Code == "insufficient_quota" {
+				wait = time.Hour
+			}
+			return "", wait, fmt.Errorf("rate limit: %s", msg)
 		}
-		return "", 0, fmt.Errorf("groq api error: %s", msg)
+		return "", 0, fmt.Errorf("api error: %s", msg)
 	}
 
 	if len(chatResp.Choices) == 0 {
-		return "", 0, fmt.Errorf("empty response from Groq")
+		return "", 0, fmt.Errorf("empty response")
 	}
 
 	return chatResp.Choices[0].Message.Content, 0, nil
+}
+
+// chatCompletion is like generate but for callers that build their own
+// full message list (Chat, HelpChat) instead of a single system+user pair.
+// Same Claude-first, Groq-fallback behavior, single attempt on each side.
+func (c *Client) chatCompletion(ctx context.Context, msgs []message, maxTokens int, temperature float64) (string, error) {
+	if c.claudeAvailable() {
+		systemPrompt := ""
+		if len(msgs) > 0 && msgs[0].Role == "system" {
+			systemPrompt = msgs[0].Content
+		}
+		result, retryAfter, err := c.doClaudeRequest(ctx, systemPrompt, msgs, maxTokens)
+		if err == nil {
+			logger.Debug("AI request served by Claude")
+			return result, nil
+		}
+		if retryAfter > 0 {
+			c.setClaudeCooldown(retryAfter)
+			logger.Warn("Claude rate-limited, switching to Groq until it resets",
+				logger.Err(err), logger.Str("resume_at", time.Now().Add(retryAfter).Format(time.RFC3339)))
+		} else {
+			logger.Warn("Claude request failed, falling back to Groq for this request", logger.Err(err))
+		}
+	}
+	key, _ := c.activeGroqKey()
+	if key == "" && len(c.groqKeys) > 0 {
+		key = c.groqKeys[0].key // last resort: use first key even if cooled down
+	}
+	result, _, err := c.doRequest(ctx, baseURL, key, c.model, msgs, maxTokens, temperature)
+	return result, err
 }
 
 // parseJSON extracts JSON from response, handling markdown code blocks
@@ -283,7 +521,7 @@ func parseJSON(text string) string {
 // --- AI Methods ---
 
 func (c *Client) Summarize(ctx context.Context, text string) (*SummaryResponse, error) {
-	system := `You are a document analysis assistant. Always respond with valid JSON only, no markdown.`
+	system := `You are a document analysis assistant. Always respond with valid JSON only, no markdown.` + indiaDocEngRule
 	prompt := fmt.Sprintf(`Summarize this document and extract key points. Respond ONLY with this JSON:
 {"summary":"<2-3 sentence summary>","key_points":["point1","point2","point3"],"word_count":%d}
 
@@ -303,7 +541,7 @@ Document:
 }
 
 func (c *Client) ExtractKeyPoints(ctx context.Context, text string) (*KeyPointsResponse, error) {
-	system := `You are a document analysis assistant. Always respond with valid JSON only, no markdown.`
+	system := `You are a document analysis assistant. Always respond with valid JSON only, no markdown.` + indiaDocEngRule
 	prompt := fmt.Sprintf(`Extract the key points from this document. Respond ONLY with this JSON:
 {"key_points":["point1","point2","point3","point4","point5"],"category":"<document category>"}
 
@@ -323,7 +561,7 @@ Document:
 }
 
 func (c *Client) ExtractTimeline(ctx context.Context, text string) (*TimelineResponse, error) {
-	system := `You are a document analysis assistant. Always respond with valid JSON only, no markdown.`
+	system := `You are a document analysis assistant. Always respond with valid JSON only, no markdown.` + indiaDocEngRule
 	prompt := fmt.Sprintf(`Extract all dates and timeline events from this document.
 Sort events STRICTLY in chronological order from the earliest date to the latest date.
 Use the most specific date format available (e.g. "15 March 1996", "June 2003", "2019").
@@ -398,7 +636,7 @@ func sortTimelineEvents(events []TimelineEvent) {
 }
 
 func (c *Client) ExtractActionItems(ctx context.Context, text string) (*ActionItemsResponse, error) {
-	system := `You are a document analysis assistant. Always respond with valid JSON only, no markdown.`
+	system := `You are a document analysis assistant. Always respond with valid JSON only, no markdown.` + indiaDocEngRule
 	prompt := fmt.Sprintf(`Extract all action items and tasks from this document. Respond ONLY with this JSON:
 {"action_items":[{"action":"<task>","priority":"high/medium/low","deadline":"<deadline or Not specified>","owner":"<owner or Not specified>"}]}
 
@@ -418,7 +656,7 @@ Document:
 }
 
 func (c *Client) AnalyzeDocument(ctx context.Context, text string) (*AnalysisResponse, error) {
-	system := `You are a document analysis assistant. Always respond with valid JSON only, no markdown.`
+	system := `You are a document analysis assistant. Always respond with valid JSON only, no markdown.` + indiaDocEngRule
 	prompt := fmt.Sprintf(`Analyze this document. Respond ONLY with this JSON:
 {"document_type":"<type>","sentiment":"positive/negative/neutral","risk_level":"low/medium/high","insights":["insight1","insight2","insight3"],"metadata":{"language":"English"}}
 
@@ -466,7 +704,7 @@ func (c *Client) Translate(ctx context.Context, text, targetLanguage string) (*T
 }
 
 func (c *Client) AnswerQuestion(ctx context.Context, text, question string) (*QAResponse, error) {
-	system := `You are a document Q&A assistant. Answer based only on the provided document. Always respond with valid JSON only, no markdown.`
+	system := `You are a document Q&A assistant. Answer based only on the provided document. Always respond with valid JSON only, no markdown.` + indiaDocEngRule
 	prompt := fmt.Sprintf(`Answer this question based on the document. Respond ONLY with this JSON:
 {"answer":"<detailed answer>","confidence":"high/medium/low","sources":["<relevant quote>"]}
 
@@ -488,7 +726,7 @@ Document:
 }
 
 func (c *Client) GenerateReport(ctx context.Context, text, reportType string) (*ReportResponse, error) {
-	system := `You are a professional report writer. Always respond with valid JSON only, no markdown.`
+	system := `You are a professional report writer. Always respond with valid JSON only, no markdown.` + indiaDocEngRule
 	prompt := fmt.Sprintf(`Generate a %s report for this document. Respond ONLY with this JSON:
 {"title":"<report title>","content":"<full report>","format":"%s"}
 
@@ -510,46 +748,13 @@ Document:
 // Chat answers a freeform question about the document, optionally using
 // prior conversation history for context.
 func (c *Client) Chat(ctx context.Context, text string, history []ChatMessage, userMessage string) (string, error) {
-	msgs := []message{{Role: "system", Content: "You are a document assistant. Answer questions based on this document:\n\n" + text}}
+	msgs := []message{{Role: "system", Content: "You are a document assistant. Answer questions based on this document." + indiaDocEngRule + "\n\n" + text}}
 	for _, h := range history {
 		msgs = append(msgs, message{Role: h.Role, Content: h.Content})
 	}
 	msgs = append(msgs, message{Role: "user", Content: userMessage})
 
-	reqBody := chatRequest{Model: c.model, Messages: msgs, MaxTokens: 1000, Temperature: 0.3}
-	body, err := json.Marshal(reqBody)
-	if err != nil {
-		return "", err
-	}
-	req, err := http.NewRequestWithContext(ctx, "POST", baseURL, bytes.NewReader(body))
-	if err != nil {
-		return "", err
-	}
-	req.Header.Set("Authorization", "Bearer "+c.apiKey)
-	req.Header.Set("Content-Type", "application/json")
-
-	resp, err := c.httpClient.Do(req)
-	if err != nil {
-		return "", err
-	}
-	defer resp.Body.Close()
-
-	respBody, err := io.ReadAll(resp.Body)
-	if err != nil {
-		return "", err
-	}
-
-	var chatResp chatResponse
-	if err := json.Unmarshal(respBody, &chatResp); err != nil {
-		return "", err
-	}
-	if chatResp.Error != nil {
-		return "", fmt.Errorf("groq: %s", chatResp.Error.Message)
-	}
-	if len(chatResp.Choices) == 0 {
-		return "", fmt.Errorf("empty response")
-	}
-	return chatResp.Choices[0].Message.Content, nil
+	return c.chatCompletion(ctx, msgs, 1000, 0.3)
 }
 
 type DraftResponse struct {
@@ -708,7 +913,7 @@ Write the full document now:`, req.DocumentType, req.CourtName, caseRef, req.Pet
 }
 
 func (c *Client) CheckGrammar(ctx context.Context, text string) (*GrammarCheckResponse, error) {
-    system := `You are a professional English language editor specializing in legal documents. Identify grammatical errors precisely. Always respond with valid JSON only, no markdown.`
+    system := `You are a professional English language editor specializing in legal documents. Identify grammatical errors precisely. Always respond with valid JSON only, no markdown.` + indiaDocEngRule
     prompt := fmt.Sprintf(`Check this legal document for grammatical errors and language mistakes.
 Respond ONLY with this exact JSON:
 {"score":<0-100>,"issue_count":<number>,"issues":[{"type":"<category>","original":"<exact wrong text from document>","correction":"<corrected text>","explanation":"<brief reason>"}],"summary":"<1-2 sentence overall assessment>"}
@@ -743,7 +948,7 @@ Document:
 }
 
 func (c *Client) AutoTag(ctx context.Context, text string) (*AutoTagsResponse, error) {
-    system := `You are an Indian legal document classification expert. Generate precise tags for legal documents. Always respond with valid JSON only, no markdown.`
+    system := `You are an Indian legal document classification expert. Generate precise tags for legal documents. Always respond with valid JSON only, no markdown.` + indiaDocEngRule
     prompt := fmt.Sprintf(`Analyze this legal document and generate classification tags.
 Respond ONLY with this exact JSON:
 {"tags":["tag1","tag2","tag3"],"practice_area":"<primary area of law>","document_type":"<type>","complexity":"simple/moderate/complex"}
@@ -779,7 +984,7 @@ Document:
 }
 
 func (c *Client) ExtractDeadlines(ctx context.Context, text string) (*DeadlineResponse, error) {
-    system := `You are a legal deadline tracking expert specializing in Indian law. Extract all time-bound obligations and deadlines. Always respond with valid JSON only, no markdown.`
+    system := `You are a legal deadline tracking expert specializing in Indian law. Extract all time-bound obligations and deadlines. Always respond with valid JSON only, no markdown.` + indiaDocEngRule
     prompt := fmt.Sprintf(`Extract all deadlines, due dates, time limits, and time-bound obligations from this legal document.
 Respond ONLY with this exact JSON:
 {"deadlines":[{"title":"<short name>","date":"<specific date or period like '30 days from signing'>","days_left":"<calculated days or 'See document'>","party":"<who is responsible>","obligation":"<what must be done>","priority":"high/medium/low"}]}
@@ -816,7 +1021,7 @@ Document:
 }
 
 func (c *Client) ScanRisks(ctx context.Context, text string) (*RiskScanResponse, error) {
-    system := `You are a senior Indian contract lawyer. Identify risky clauses in legal documents. Always respond with valid JSON only, no markdown, no explanation.`
+    system := `You are a senior Indian contract lawyer. Identify risky clauses in legal documents. Always respond with valid JSON only, no markdown, no explanation.` + indiaDocEngRule
     prompt := fmt.Sprintf(`Analyze this legal document for risky or unfavorable clauses under Indian law.
 Respond ONLY with this exact JSON:
 {"overall_risk":"high/medium/low","clauses":[{"title":"<clause name>","risk_level":"high/medium/low","clause_text":"<verbatim or paraphrased clause>","concern":"<why it is risky>","recommendation":"<what to do>"}]}
@@ -864,7 +1069,7 @@ type CompareResponse struct {
 }
 
 func (c *Client) CompareDocuments(ctx context.Context, text1, text2 string) (*CompareResponse, error) {
-	system := `You are a senior Indian legal document analyst. Compare two legal documents and identify all meaningful differences. Always respond with valid JSON only, no markdown.`
+	system := `You are a senior Indian legal document analyst. Compare two legal documents and identify all meaningful differences. Always respond with valid JSON only, no markdown.` + indiaDocEngRule
 	prompt := fmt.Sprintf(`Compare these two legal documents and identify all meaningful differences.
 Respond ONLY with this exact JSON:
 {"summary":"<2-3 sentence overview of the main differences>","total_changes":<number>,"differences":[{"category":"<clause/section name>","doc_a":"<what Document A says, or 'Not present'>","doc_b":"<what Document B says, or 'Not present'>","change":"added|removed|modified"}],"verdict":"<1-2 sentences: which version is more favorable and why, or what the key implication of the changes is>"}
@@ -944,44 +1149,124 @@ Answer questions helpfully and concisely. For how-to questions, give clear numbe
 	}
 	msgs = append(msgs, message{Role: "user", Content: userMessage})
 
-	reqBody := chatRequest{Model: c.model, Messages: msgs, MaxTokens: 600, Temperature: 0.5}
-	body, err := json.Marshal(reqBody)
-	if err != nil {
-		return "", err
-	}
-	req, err := http.NewRequestWithContext(ctx, "POST", baseURL, bytes.NewReader(body))
-	if err != nil {
-		return "", err
-	}
-	req.Header.Set("Authorization", "Bearer "+c.apiKey)
-	req.Header.Set("Content-Type", "application/json")
+	return c.chatCompletion(ctx, msgs, 600, 0.5)
+}
 
-	resp, err := c.httpClient.Do(req)
-	if err != nil {
-		return "", err
-	}
-	defer resp.Body.Close()
+// ─── Complaint Reply Generator ────────────────────────────────────────────────
 
-	respBody, err := io.ReadAll(resp.Body)
+// ComplaintReplyResponse holds the AI-generated reply and change metadata.
+type ComplaintReplyResponse struct {
+	ReplyText        string   `json:"reply_text"`
+	ModifiedSections []string `json:"modified_sections"`
+	Summary          string   `json:"summary"`
+}
+
+// GenerateComplaintReply generates a new legal reply for a complaint by adapting
+// an existing reply template, preserving its structure, legal language, and tone
+// while replacing all case-specific facts, parties, and allegations.
+func (c *Client) GenerateComplaintReply(ctx context.Context, complaintText, existingReplyText string) (*ComplaintReplyResponse, error) {
+	system := `You are a senior Indian advocate with 20 years of experience drafting legal replies, written statements, and counter-affidavits. You specialize in adapting existing reply templates to new complaints while preserving their legal structure and language.
+
+IMPORTANT LANGUAGE RULE: The complaint may be written in any Indian regional language — Marathi, Hindi, Gujarati, Tamil, Telugu, Kannada, Bengali, or any other. Regardless of the complaint's language, you MUST write the complete new reply ENTIRELY IN ENGLISH. Translate and understand the complaint's allegations, facts, parties, and dates, then draft the reply in formal legal English.`
+
+	prompt := fmt.Sprintf(`You are given:
+1. A NEW COMPLAINT that requires a reply (may be in Marathi, Hindi, or any Indian language — read and understand it)
+2. An EXISTING REPLY (template) for a different but similar complaint
+
+Your task:
+- Carefully read the new complaint in its original language: identify parties, allegations, facts, dates, case number, court, relief sought
+- Analyze the existing reply: understand its structure, numbered paragraphs, preliminary objections, legal language, tone, and signature block
+- Generate a COMPLETE NEW REPLY IN ENGLISH by adapting the existing reply to address the new complaint:
+  * Preserve the exact document structure (same sections, heading pattern, paragraph numbering style)
+  * Preserve all standard preliminary objections, legal submissions, and formal language patterns
+  * Replace case-specific details: party names, dates, allegations, case/complaint number, facts (translated to English)
+  * Adapt legal arguments paragraph by paragraph to address the new complaint's specific allegations
+  * Do NOT copy verbatim from the complaint text; respond to each allegation in legal terms
+  * Maintain the same tone (formal, professional, legally precise)
+  * Include proper signature block, verification, and date placeholders
+  * THE REPLY MUST BE WRITTEN ENTIRELY IN ENGLISH regardless of the complaint's language
+
+Output format — follow EXACTLY (do not change the markers):
+---REPLY---
+[Write the complete, ready-to-file reply here. All paragraphs numbered. Proper formal legal language. Do not truncate — write the full document.]
+---END_REPLY---
+---CHANGES---
+[List each change made, one per line starting with "- ", e.g.:
+- Parties updated: old names replaced with new complainant/respondent
+- Case/complaint number updated throughout
+- Paragraphs 3-6: Facts adapted to address new allegations
+- Prayer section: Updated to reflect new complaint relief
+- Dates: All dates updated per new complaint
+]
+---END_CHANGES---
+---SUMMARY---
+[Write a detailed summary of 4-6 paragraphs covering ALL of the following:
+
+Paragraph 1 — Case Overview: Full names of all parties, the forum/authority the complaint is filed before, the complaint/case number, date of complaint, and the subject matter in one or two sentences.
+
+Paragraph 2 — Background & Facts: The complainant's background and connection to the matter, the respondents' roles, the key dates, events, or transactions that led to the complaint.
+
+Paragraph 3 — Allegations: A comprehensive list of every allegation or grievance raised in the complaint — include specific amounts (money, weight, area, etc.), dates, and section numbers of laws cited.
+
+Paragraph 4 — Relief Sought: Exactly what the complainant is asking for (orders, compensation, suspension, injunction, criminal action, etc.).
+
+Paragraph 5 — How the Reply Addresses It: The key legal defences raised in the reply — preliminary objections, denials, counter-facts, and legal submissions paragraph by paragraph.
+
+Paragraph 6 — Status and Key Points: What changes were made from the template, any critical observations about strengths or weaknesses in the complaint, and any urgent actions the respondent should take.]
+---END_SUMMARY---
+
+NEW COMPLAINT:
+%s
+
+EXISTING REPLY (TEMPLATE — use this structure and language):
+%s
+
+Write the complete new reply now:`, complaintText, existingReplyText)
+
+	raw, err := c.generate(ctx, system, prompt, 8000)
 	if err != nil {
-		return "", err
+		return nil, fmt.Errorf("generate complaint reply: %w", err)
 	}
 
-	var chatResp chatResponse
-	if err := json.Unmarshal(respBody, &chatResp); err != nil {
-		return "", err
+	return parseComplaintReply(raw), nil
+}
+
+func parseComplaintReply(raw string) *ComplaintReplyResponse {
+	result := &ComplaintReplyResponse{ModifiedSections: []string{}}
+
+	if s := strings.Index(raw, "---REPLY---"); s != -1 {
+		if e := strings.Index(raw, "---END_REPLY---"); e != -1 && e > s {
+			result.ReplyText = strings.TrimSpace(raw[s+len("---REPLY---") : e])
+		}
 	}
-	if chatResp.Error != nil {
-		return "", fmt.Errorf("groq: %s", chatResp.Error.Message)
+	if s := strings.Index(raw, "---CHANGES---"); s != -1 {
+		if e := strings.Index(raw, "---END_CHANGES---"); e != -1 && e > s {
+			block := strings.TrimSpace(raw[s+len("---CHANGES---") : e])
+			for _, line := range strings.Split(block, "\n") {
+				line = strings.TrimSpace(line)
+				if line == "" {
+					continue
+				}
+				if strings.HasPrefix(line, "- ") {
+					line = strings.TrimPrefix(line, "- ")
+				}
+				result.ModifiedSections = append(result.ModifiedSections, line)
+			}
+		}
 	}
-	if len(chatResp.Choices) == 0 {
-		return "", fmt.Errorf("empty response")
+	if s := strings.Index(raw, "---SUMMARY---"); s != -1 {
+		if e := strings.Index(raw, "---END_SUMMARY---"); e != -1 && e > s {
+			result.Summary = strings.TrimSpace(raw[s+len("---SUMMARY---") : e])
+		}
 	}
-	return chatResp.Choices[0].Message.Content, nil
+	if result.ReplyText == "" {
+		result.ReplyText = strings.TrimSpace(raw)
+	}
+	return result
 }
 
 func (c *Client) ExtractCitations(ctx context.Context, text string) (*CitationsResponse, error) {
-    system := `You are a legal document analysis expert specializing in Indian law. Extract all legal citations. Always respond with valid JSON only, no markdown, no explanation.`
+    system := `You are a legal document analysis expert specializing in Indian law. Extract all legal citations. Always respond with valid JSON only, no markdown, no explanation.` + indiaDocEngRule
     prompt := fmt.Sprintf(`Extract all legal citations and references from this Indian legal document.
 Respond ONLY with this exact JSON (empty arrays [] if none found for a category, no duplicates):
 {"cases":["<case name and citation>"],"sections":["<Section X of Act>"],"acts":["<Full Act name>"],"articles":["<Article X>"],"rules":["<Rule/Order reference>"]}

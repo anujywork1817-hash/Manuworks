@@ -6,6 +6,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"sort"
 	"strings"
 	"sync"
 	"time"
@@ -37,7 +38,6 @@ type PageResult struct {
 
 type Service struct {
 	cfg *config.OCRConfig
-	mu  sync.Mutex // gosseract client is not goroutine-safe; serialize calls
 }
 
 func NewService(cfg *config.OCRConfig) *Service {
@@ -58,7 +58,7 @@ func (s *Service) ExtractFromFile(ctx context.Context, filePath string) (*Extrac
 	case "pdf":
 		result, err = s.extractFromPDF(ctx, filePath)
 	case "png", "jpg", "jpeg", "tiff", "tif", "bmp", "webp":
-		result, err = s.extractFromImage(ctx, filePath)
+		result, err = s.extractFromImage(ctx, filePath, s.cfg.Lang)
 	default:
 		return nil, fmt.Errorf("unsupported file type for OCR: .%s", ext)
 	}
@@ -85,53 +85,74 @@ func (s *Service) ExtractFromFile(ctx context.Context, filePath string) (*Extrac
 // extractFromPDF converts each PDF page to an image then runs Tesseract on each.
 // Requires: pdftoppm (from poppler-utils) installed on the system.
 func (s *Service) extractFromPDF(ctx context.Context, pdfPath string) (*ExtractResult, error) {
-	// Create a temp directory for page images
+	return s.extractFromPDFWithLang(ctx, pdfPath, s.cfg.Lang)
+}
+
+func (s *Service) extractFromPDFWithLang(ctx context.Context, pdfPath, lang string) (*ExtractResult, error) {
+	return s.extractFromPDFWithPages(ctx, pdfPath, lang, 0)
+}
+
+// extractFromPDFWithPages is the core PDF→OCR pipeline.
+// maxPages: 0 = no limit; N > 0 = OCR at most N pages (front pages first).
+// DPI strategy: try 150 first — images are 4× smaller than 300 DPI so OCR
+// runs 3-4× faster with no meaningful quality loss for typical legal scan
+// resolution. Fall back to 300 DPI only if 150 DPI fails (e.g. memory error).
+func (s *Service) extractFromPDFWithPages(ctx context.Context, pdfPath, lang string, maxPages int) (*ExtractResult, error) {
 	tmpDir, err := os.MkdirTemp("", "ocr_pdf_*")
 	if err != nil {
 		return nil, fmt.Errorf("failed to create temp dir: %w", err)
 	}
-	defer os.RemoveAll(tmpDir)
-
-	// Convert PDF pages to PNG images using pdftoppm
-	// -r 300 = 300 DPI (good quality for OCR)
-	// -png = output format
-	outputPrefix := filepath.Join(tmpDir, "page")
+	defer func() { os.RemoveAll(tmpDir) }()
 
 	timeoutCtx, cancel := context.WithTimeout(ctx, s.cfg.Timeout)
 	defer cancel()
 
-	cmd := exec.CommandContext(timeoutCtx, "pdftoppm",
-		"-r", "300",
-		"-png",
-		pdfPath,
-		outputPrefix,
-	)
-
-	if output, err := cmd.CombinedOutput(); err != nil {
-		// pdftoppm not available — try direct PDF OCR as fallback
-		logger.Warn("pdftoppm not available, falling back to direct OCR",
-			logger.Str("error", string(output)),
-		)
-		return s.extractFromImage(ctx, pdfPath)
-	}
-
-	// Find all generated page images (page-1.png, page-2.png, ...)
-	pattern := filepath.Join(tmpDir, "page-*.png")
-	pages, err := filepath.Glob(pattern)
-	if err != nil || len(pages) == 0 {
-		// Try alternative naming (page-01.png)
-		pattern = filepath.Join(tmpDir, "page-0*.png")
-		pages, _ = filepath.Glob(pattern)
-	}
+	// Render every page to a PNG. Several renderers are tried in turn because a
+	// single tool can silently fail — sometimes exiting 0 with no output — on
+	// scans that use JBIG2/JPEG2000 or otherwise unusual PDF structures (common
+	// for scanner- and receipt-generated PDFs). See renderPDFToImages.
+	// NOTE: Never pass a .pdf path to extractFromImage — Tesseract cannot read PDFs.
+	pages, renderErr := renderPDFToImages(timeoutCtx, pdfPath, tmpDir)
 
 	if len(pages) == 0 {
-		return nil, fmt.Errorf("no page images generated from PDF")
+		// Last resort: some "image-only" PDFs still carry a thin text layer that
+		// pdftotext can pull out even when no renderer could rasterise a page.
+		if text, terr := extractDigitalPDFText(ctx, pdfPath); terr == nil && len(strings.TrimSpace(text)) > 10 {
+			logger.Info("pdftotext last-resort succeeded after all renderers produced no images")
+			cleaned := cleanText(text)
+			return &ExtractResult{
+				Text:       cleaned,
+				PageCount:  estimatePageCount(cleaned),
+				WordCount:  countWords(cleaned),
+				Language:   lang,
+				Confidence: 90.0,
+			}, nil
+		}
+		logger.Warn("All PDF renderers failed to produce page images",
+			logger.Str("error", renderErr))
+		return nil, fmt.Errorf("could not extract text from this PDF — it appears to be image-only but the server could not render its pages (the file may be encrypted, corrupted, or in an unsupported PDF format)")
 	}
 
-	// OCR each page
-	var allText strings.Builder
-	var totalConfidence float64
-	pageResults := make([]PageResult, 0, len(pages))
+	// Apply page cap before OCR (saves the most time for large scanned docs).
+	totalPages := len(pages)
+	if maxPages > 0 && len(pages) > maxPages {
+		pages = pages[:maxPages]
+		logger.Info("Capped OCR to first pages",
+			logger.Int("capped_to", maxPages),
+			logger.Int("total_pages", totalPages),
+		)
+	}
+
+	// OCR pages in parallel — Tesseract CLI spawns separate OS processes so
+	// there is no shared state between workers. Cap at 3 workers to avoid
+	// overloading free-tier CPUs while still getting a 2-3x wall-clock win.
+	type ocrResult struct {
+		pr  *PageResult
+		err error
+	}
+	results := make([]ocrResult, len(pages))
+	sem := make(chan struct{}, 3)
+	var wg sync.WaitGroup
 
 	for i, pagePath := range pages {
 		select {
@@ -139,24 +160,36 @@ func (s *Service) extractFromPDF(ctx context.Context, pdfPath string) (*ExtractR
 			return nil, ctx.Err()
 		default:
 		}
+		wg.Add(1)
+		go func(idx int, path string) {
+			defer wg.Done()
+			sem <- struct{}{}
+			defer func() { <-sem }()
+			pr, err := s.ocrImageFile(path, lang)
+			results[idx] = ocrResult{pr, err}
+		}(i, pagePath)
+	}
+	wg.Wait()
 
-		pr, err := s.ocrImageFile(pagePath, s.cfg.Lang)
-		if err != nil {
+	// Collect in original page order.
+	var allText strings.Builder
+	var totalConfidence float64
+	pageResults := make([]PageResult, 0, len(pages))
+	for i, r := range results {
+		if r.err != nil {
 			logger.Warn("OCR failed for page",
 				logger.Int("page", i+1),
-				logger.Str("error", err.Error()),
+				logger.Str("error", r.err.Error()),
 			)
 			continue
 		}
-
-		pr.PageNumber = i + 1
-		pageResults = append(pageResults, *pr)
-
-		allText.WriteString(pr.Text)
+		r.pr.PageNumber = i + 1
+		pageResults = append(pageResults, *r.pr)
+		allText.WriteString(r.pr.Text)
 		allText.WriteString("\n\n--- Page ")
 		allText.WriteString(fmt.Sprintf("%d", i+2))
 		allText.WriteString(" ---\n\n")
-		totalConfidence += pr.Confidence
+		totalConfidence += r.pr.Confidence
 	}
 
 	avgConfidence := 0.0
@@ -166,24 +199,111 @@ func (s *Service) extractFromPDF(ctx context.Context, pdfPath string) (*ExtractR
 
 	return &ExtractResult{
 		Text:       cleanText(allText.String()),
-		PageCount:  len(pages),
-		Language:   s.cfg.Lang,
+		PageCount:  totalPages, // report true page count even when capped
+		Language:   lang,
 		Confidence: avgConfidence,
 	}, nil
 }
 
+// renderPDFToImages converts each page of a PDF into a PNG inside tmpDir and
+// returns the image paths in page order. It tries pdftoppm, then pdftocairo,
+// then Ghostscript (if installed), at 150 then 300 DPI. Crucially, each attempt
+// is judged by the images it actually produced — not just the exit code —
+// because these tools can exit 0 without rendering anything on scans using
+// JBIG2/JPEG2000 or malformed PDFs, and a tool that chokes on such a file is
+// often rescued by a different rendering backend. Returns nil and a diagnostic
+// string when no renderer produced output.
+func renderPDFToImages(ctx context.Context, pdfPath, tmpDir string) ([]string, string) {
+	prefix := filepath.Join(tmpDir, "page")
+
+	attempts := []struct {
+		name string
+		args func(dpi string) []string
+	}{
+		{"pdftoppm", func(dpi string) []string {
+			return []string{"-r", dpi, "-png", pdfPath, prefix}
+		}},
+		{"pdftocairo", func(dpi string) []string {
+			return []string{"-png", "-r", dpi, pdfPath, prefix}
+		}},
+		// Ghostscript is the most tolerant of damaged/encrypted PDFs. Zero-pad
+		// the page number so lexical sorting keeps pages in order past page 9.
+		{"gs", func(dpi string) []string {
+			return []string{"-dQUIET", "-dNOPAUSE", "-dBATCH", "-dSAFER",
+				"-sDEVICE=png16m", "-r" + dpi,
+				"-sOutputFile=" + prefix + "-%03d.png", pdfPath}
+		}},
+	}
+
+	var lastErr string
+	for _, a := range attempts {
+		for _, dpi := range []string{"150", "300"} {
+			clearPDFPageImages(tmpDir)
+			out, err := exec.CommandContext(ctx, a.name, a.args(dpi)...).CombinedOutput()
+			if imgs := listPDFPageImages(tmpDir); len(imgs) > 0 {
+				if a.name != "pdftoppm" || dpi != "150" {
+					logger.Info("PDF rendered via fallback",
+						logger.Str("renderer", a.name), logger.Str("dpi", dpi))
+				}
+				return imgs, ""
+			}
+			if err != nil {
+				lastErr = fmt.Sprintf("%s @ %s DPI: %s", a.name, dpi, strings.TrimSpace(string(out)))
+			} else {
+				lastErr = fmt.Sprintf("%s @ %s DPI: exited cleanly but produced no images", a.name, dpi)
+			}
+			logger.Warn("PDF render attempt yielded no images", logger.Str("detail", lastErr))
+		}
+	}
+	return nil, lastErr
+}
+
+// listPDFPageImages returns the rendered page-image paths in dir, sorted so
+// pages stay in order (page-1, page-2, …).
+func listPDFPageImages(dir string) []string {
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		return nil
+	}
+	var imgs []string
+	for _, e := range entries {
+		if e.IsDir() {
+			continue
+		}
+		switch strings.ToLower(filepath.Ext(e.Name())) {
+		case ".png", ".ppm", ".jpg", ".jpeg":
+			imgs = append(imgs, filepath.Join(dir, e.Name()))
+		}
+	}
+	sort.Strings(imgs)
+	return imgs
+}
+
+// clearPDFPageImages removes page images left by a previous render attempt so
+// the next renderer starts from a clean directory.
+func clearPDFPageImages(dir string) {
+	for _, p := range listPDFPageImages(dir) {
+		os.Remove(p)
+	}
+}
+
 // ─── Image Extraction ─────────────────────────────────────────────────────────
 
-func (s *Service) extractFromImage(ctx context.Context, imagePath string) (*ExtractResult, error) {
-	pr, err := s.ocrImageFile(imagePath, s.cfg.Lang)
+func (s *Service) extractFromImage(ctx context.Context, imagePath, lang string) (*ExtractResult, error) {
+	if lang == "" {
+		lang = s.cfg.Lang
+	}
+	pr, err := s.ocrImageFile(imagePath, lang)
 	if err != nil {
 		return nil, err
 	}
 
+	cleaned := cleanText(pr.Text)
 	return &ExtractResult{
-		Text:       cleanText(pr.Text),
+		Text:       cleaned,
 		PageCount:  1,
-		Language:   s.cfg.Lang,
+		WordCount:  countWords(cleaned),
+		Language:   lang,
 		Confidence: pr.Confidence,
 	}, nil
 }
@@ -191,22 +311,44 @@ func (s *Service) extractFromImage(ctx context.Context, imagePath string) (*Extr
 // ─── Core Tesseract Call ──────────────────────────────────────────────────────
 
 // ocrImageFile runs Tesseract CLI on a single image file.
+// If the lang string includes optional packages (mod, san) that are not
+// installed, it retries automatically with those packages stripped out so a
+// missing tessdata file never silently kills OCR for the whole document.
 func (s *Service) ocrImageFile(imagePath, lang string) (*PageResult, error) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-
 	tessLang := toTesseractLang(lang)
 
-	cmd := exec.Command("tesseract", imagePath, "stdout", "-l", tessLang, "--oem", "3", "--psm", "3")
+	// --oem 1 = LSTM only: faster than combined mode (--oem 3) and more accurate
+	// for Indian scripts. --psm 3 = fully automatic page segmentation.
+	cmd := exec.Command("tesseract", imagePath, "stdout", "-l", tessLang, "--oem", "1", "--psm", "3")
 	output, err := cmd.Output()
-	if err != nil {
-		return nil, fmt.Errorf("tesseract failed on %s: %w", filepath.Base(imagePath), err)
+	if err == nil {
+		return &PageResult{Text: string(output), Confidence: 85.0}, nil
 	}
 
-	return &PageResult{
-		Text:       string(output),
-		Confidence: 85.0,
-	}, nil
+	// If tessdata for an optional language (mod, san) is missing, Tesseract
+	// exits non-zero with "Could not initialize tesseract". Strip those optional
+	// langs and retry before giving up.
+	errMsg := strings.ToLower(err.Error())
+	if strings.Contains(tessLang, "+mod") || strings.Contains(tessLang, "+san") {
+		if strings.Contains(errMsg, "tesseract") || strings.Contains(errMsg, "exit") {
+			fallback := tessLang
+			for _, opt := range []string{"+mod", "mod+", "+san", "san+"} {
+				fallback = strings.ReplaceAll(fallback, opt, "")
+			}
+			if fallback != tessLang {
+				logger.Warn("Retrying OCR without optional tessdata",
+					logger.Str("dropped_from", tessLang),
+					logger.Str("fallback", fallback),
+				)
+				cmd2 := exec.Command("tesseract", imagePath, "stdout", "-l", fallback, "--oem", "1", "--psm", "3")
+				if out2, err2 := cmd2.Output(); err2 == nil {
+					return &PageResult{Text: string(out2), Confidence: 85.0}, nil
+				}
+			}
+		}
+	}
+
+	return nil, fmt.Errorf("tesseract failed on %s: %w", filepath.Base(imagePath), err)
 }
 
 // toTesseractLang maps ISO 639-1 2-letter codes to Tesseract 3-letter codes.
@@ -232,6 +374,38 @@ func toTesseractLang(lang string) string {
 		return lang
 	}
 	return "eng"
+}
+
+// LangToTess maps an ISO 639-1 language code (as sent from the Flutter app) to
+// the best Tesseract multilingual string for that language. Indian scripts always
+// include "eng" so mixed English-vernacular documents are handled correctly.
+func LangToTess(lang string) string {
+	switch strings.ToLower(lang) {
+	case "mr", "marathi":
+		return "eng+mar+mod+san"
+	case "hi", "hindi":
+		return "eng+hin"
+	case "gu", "gujarati":
+		return "eng+guj"
+	case "ta", "tamil":
+		return "eng+tam"
+	case "te", "telugu":
+		return "eng+tel"
+	case "kn", "kannada":
+		return "eng+kan"
+	case "ml", "malayalam":
+		return "eng+mal"
+	case "pa", "punjabi":
+		return "eng+pan"
+	case "bn", "bengali":
+		return "eng+ben"
+	case "ur", "urdu":
+		return "eng+urd"
+	case "sa", "san", "sanskrit":
+		return "eng+san"
+	default:
+		return "eng+mar+hin" // best default for this app's user base
+	}
 }
 
 // ─── DOCX Text Extraction ─────────────────────────────────────────────────────
@@ -315,6 +489,33 @@ func (s *Service) ExtractFromTXT(ctx context.Context, filePath string) (*Extract
 // ExtractText is the main entry point — routes to the correct extractor
 // based on file extension, no OCR for digital text files.
 func (s *Service) ExtractText(ctx context.Context, filePath string) (*ExtractResult, error) {
+	return s.ExtractTextWithLang(ctx, filePath, s.cfg.Lang)
+}
+
+// ExtractTextWithLang is like ExtractText but uses a custom Tesseract language
+// for OCR (e.g. "eng+mar+hin" for multilingual documents).
+// For digital PDFs the lang only affects the ExtractResult.Language field;
+// for scanned PDFs it controls which language model Tesseract loads.
+func (s *Service) ExtractTextWithLang(ctx context.Context, filePath, lang string) (*ExtractResult, error) {
+	return s.extractText(ctx, filePath, lang, 0)
+}
+
+// ExtractTextFast is like ExtractTextWithLang but caps scanned-PDF OCR at
+// maxPages (pass 0 for no limit). Use for interactive AI features (Summarize,
+// Key Points, etc.) where you need a response within ~30 seconds:
+//   - Digital PDFs: instant via pdftotext — page cap is ignored
+//   - Scanned PDFs: OCR only the first maxPages pages
+//   - DOCX / TXT / images: no cap applied (they are already fast)
+func (s *Service) ExtractTextFast(ctx context.Context, filePath, lang string, maxPages int) (*ExtractResult, error) {
+	return s.extractText(ctx, filePath, lang, maxPages)
+}
+
+// extractText is the internal router used by both ExtractTextWithLang and
+// ExtractTextFast. maxPages=0 means no limit.
+func (s *Service) extractText(ctx context.Context, filePath, lang string, maxPages int) (*ExtractResult, error) {
+	if lang == "" {
+		lang = s.cfg.Lang
+	}
 	ext := strings.ToLower(strings.TrimPrefix(filepath.Ext(filePath), "."))
 
 	switch ext {
@@ -323,33 +524,62 @@ func (s *Service) ExtractText(ctx context.Context, filePath string) (*ExtractRes
 	case "docx", "doc":
 		return s.ExtractFromDOCX(ctx, filePath)
 	case "pdf":
-		// First try to extract digital text from PDF (faster, more accurate)
-		if text, err := extractDigitalPDFText(filePath); err == nil && len(text) > 100 {
+		// Try digital text extraction first — instant, language-agnostic.
+		if text, err := extractDigitalPDFText(ctx, filePath); err == nil && len(strings.TrimSpace(text)) > 30 {
 			wc := countWords(text)
+			logger.Info("Digital PDF text extracted (no OCR needed)",
+				logger.Int("chars", len(text)),
+				logger.Int("words", wc),
+			)
 			return &ExtractResult{
 				Text:       cleanText(text),
 				PageCount:  estimatePageCount(text),
 				WordCount:  wc,
-				Language:   s.cfg.Lang,
+				Language:   lang,
 				Confidence: 100.0,
 			}, nil
 		}
-		// Fall back to OCR for scanned PDFs
-		return s.extractFromPDF(ctx, filePath)
+		// Scanned PDF — OCR required.
+		logger.Info("PDF has no text layer — falling back to Tesseract OCR",
+			logger.Str("lang", lang),
+			logger.Int("max_pages", maxPages),
+		)
+		return s.extractFromPDFWithPages(ctx, filePath, lang, maxPages)
+	case "png", "jpg", "jpeg", "tiff", "tif", "bmp", "webp":
+		return s.extractFromImage(ctx, filePath, lang)
 	default:
 		return s.ExtractFromFile(ctx, filePath)
 	}
 }
 
+// digitalPDFTextTimeout bounds each pdftotext pass. Plain text extraction
+// should always be near-instant — a hang here (malformed/huge/adversarial
+// PDF) previously blocked document processing forever with no timeout and
+// no error, leaving the document stuck in "processing" indefinitely.
+const digitalPDFTextTimeout = 30 * time.Second
+
 // extractDigitalPDFText tries to extract selectable text from a PDF (not scanned).
 // Uses pdftotext from poppler-utils.
-func extractDigitalPDFText(filePath string) (string, error) {
-	cmd := exec.Command("pdftotext", "-layout", filePath, "-")
-	output, err := cmd.Output()
+// IMPORTANT: try WITHOUT -layout first — the -layout flag preserves visual spacing
+// but corrupts complex scripts like Devanagari (Marathi/Hindi), returning near-empty
+// output and causing a needless fall-through to slow Tesseract OCR.
+func extractDigitalPDFText(ctx context.Context, filePath string) (string, error) {
+	// Pass 1: plain extraction — correct for all scripts including Devanagari.
+	pass1Ctx, cancel1 := context.WithTimeout(ctx, digitalPDFTextTimeout)
+	defer cancel1()
+	if out, err := exec.CommandContext(pass1Ctx, "pdftotext", filePath, "-").Output(); err == nil {
+		if text := strings.TrimSpace(string(out)); len(text) > 30 {
+			return text, nil
+		}
+	}
+	// Pass 2: layout mode — better for columnar/tabular Latin-script PDFs.
+	pass2Ctx, cancel2 := context.WithTimeout(ctx, digitalPDFTextTimeout)
+	defer cancel2()
+	out, err := exec.CommandContext(pass2Ctx, "pdftotext", "-layout", filePath, "-").Output()
 	if err != nil {
 		return "", err
 	}
-	return string(output), nil
+	return string(out), nil
 }
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────

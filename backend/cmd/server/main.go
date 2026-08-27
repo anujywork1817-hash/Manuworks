@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"path/filepath"
 	"syscall"
 	"time"
 
@@ -21,6 +22,8 @@ import (
 	aiHandler "github.com/yourusername/docassist/internal/ai/handler"
 	aiService "github.com/yourusername/docassist/internal/ai/service"
 	authHandler "github.com/yourusername/docassist/internal/auth/handler"
+	chatModel "github.com/yourusername/docassist/internal/chat/model"
+	chatRepo "github.com/yourusername/docassist/internal/chat/repository"
 	authModel "github.com/yourusername/docassist/internal/auth/model"
 	authRepo "github.com/yourusername/docassist/internal/auth/repository"
 	authService "github.com/yourusername/docassist/internal/auth/service"
@@ -32,6 +35,10 @@ import (
 	matterModel "github.com/yourusername/docassist/internal/matter/model"
 	matterRepo "github.com/yourusername/docassist/internal/matter/repository"
 	matterService "github.com/yourusername/docassist/internal/matter/service"
+	paymentHandler "github.com/yourusername/docassist/internal/payment/handler"
+	paymentModel "github.com/yourusername/docassist/internal/payment/model"
+	paymentRepo "github.com/yourusername/docassist/internal/payment/repository"
+	paymentService "github.com/yourusername/docassist/internal/payment/service"
 	searchHandler "github.com/yourusername/docassist/internal/search/handler"
 	searchService "github.com/yourusername/docassist/internal/search/service"
 	"github.com/yourusername/docassist/pkg/database"
@@ -41,6 +48,7 @@ import (
 	"github.com/yourusername/docassist/pkg/middleware"
 	"github.com/yourusername/docassist/pkg/ocr"
 	"github.com/yourusername/docassist/pkg/qdrant"
+	"github.com/yourusername/docassist/pkg/razorpay"
 )
 
 // @title           DocAssist API
@@ -77,13 +85,24 @@ func main() {
 	logger.Info("Starting DocAssist API", zap.String("env", cfg.App.Env), zap.String("version", "1.0.0"))
 
 	// ─── 4. Connect PostgreSQL ───────────────────────────────────────────────────
-	fmt.Printf("DSN: %s\n", cfg.Postgres.DSN())
-    db, err := database.Connect(cfg)
+	// Never log the DSN itself — it embeds POSTGRES_PASSWORD.
+	logger.Info("Connecting to PostgreSQL",
+		zap.String("host", cfg.Postgres.Host),
+		zap.String("db", cfg.Postgres.DBName),
+		zap.String("sslmode", cfg.Postgres.SSLMode),
+	)
+	db, err := database.Connect(cfg)
 	if err != nil {
 		logger.Fatal("Failed to connect to PostgreSQL", logger.Err(err))
 	}
 	defer database.Close()
 	logger.Info("PostgreSQL connected")
+
+	// Create custom PostgreSQL ENUM types that GORM cannot create automatically
+	db.Exec(`DO $$ BEGIN
+		CREATE TYPE user_status AS ENUM ('active', 'inactive', 'suspended');
+	EXCEPTION WHEN duplicate_object THEN NULL;
+	END $$;`)
 
 	// Auto-migrate all models — GORM creates/updates tables, never drops columns
 	if err := db.AutoMigrate(
@@ -96,6 +115,9 @@ func main() {
 		&docModel.DocumentChunk{},
 		&matterModel.Matter{},
 		&matterModel.MatterDocument{},
+		&paymentModel.Order{},
+		&chatModel.ChatSession{},
+		&chatModel.ChatMessage{},
 	); err != nil {
 		logger.Fatal("AutoMigrate failed", logger.Err(err))
 	}
@@ -143,7 +165,7 @@ func main() {
 	if err := os.MkdirAll(cfg.Storage.LocalPath, 0755); err != nil {
 		logger.Fatal("Failed to create storage directory", logger.Err(err))
 	}
-	if err := os.MkdirAll(cfg.Log.FilePath[:len(cfg.Log.FilePath)-len("/app.log")], 0755); err != nil {
+	if err := os.MkdirAll(filepath.Dir(cfg.Log.FilePath), 0755); err != nil {
 		logger.Warn("Could not create log directory", logger.Err(err))
 	}
 
@@ -151,14 +173,29 @@ func main() {
 	authRepository := authRepo.NewAuthRepository(db)
 	documentRepository := docRepo.NewDocumentRepository(db)
 	matterRepository := matterRepo.NewMatterRepository(db)
+	paymentRepository := paymentRepo.NewPaymentRepository(db)
+	chatRepository := chatRepo.NewChatRepository(db)
 
 	// ─── 11. Wire services ───────────────────────────────────────────────────────
 	authSvc := authService.New(authRepository, cfg, nil)
 	documentSvc := docService.NewDocumentService(documentRepository, cfg)
-	groqClient := groq.NewClient(&groq.Config{APIKey: cfg.Groq.APIKey, Model: cfg.Groq.Model})
-    aiSvc := aiService.NewAIService(documentRepository, geminiClient, groqClient, qdrantClient, ocrService)
+	groqClient := groq.NewClient(&groq.Config{
+		APIKey:       cfg.Groq.APIKey,
+		APIKeys:      cfg.Groq.APIKeys, // GROQ_API_KEY_2 … _5 for key rotation
+		Model:        cfg.Groq.Model,
+		ClaudeAPIKey: cfg.Claude.APIKey,
+		ClaudeModel:  cfg.Claude.Model,
+	})
+	if cfg.Claude.APIKey != "" {
+		logger.Info("Claude configured as primary AI provider, Groq as fallback")
+	} else {
+		logger.Info("ANTHROPIC_API_KEY not set — using Groq as the AI provider")
+	}
+    aiSvc := aiService.NewAIService(documentRepository, geminiClient, groqClient, qdrantClient, ocrService, chatRepository)
 	searchSvc := searchService.NewSearchService(db, geminiClient, qdrantClient)
 	matterSvc := matterService.NewMatterService(matterRepository)
+	rzpClient := razorpay.NewClient(cfg.Razorpay.KeyID, cfg.Razorpay.KeySecret)
+	paymentSvc := paymentService.NewPaymentService(paymentRepository, rzpClient, cfg.Razorpay.KeyID)
 
 	// ─── 12. Wire handlers ───────────────────────────────────────────────────────
 	authH := authHandler.New(authSvc)
@@ -166,6 +203,7 @@ func main() {
 	aiH := aiHandler.NewAIHandler(aiSvc, ocrService)
 	searchH := searchHandler.NewSearchHandler(searchSvc)
 	matterH := matterHandler.NewMatterHandler(matterSvc, documentRepository)
+	paymentH := paymentHandler.NewPaymentHandler(paymentSvc)
 
 	// ─── 13. Setup Gin ───────────────────────────────────────────────────────────
 	if cfg.IsProd() {
@@ -264,15 +302,21 @@ func main() {
 		protected.POST("/documents/:document_id/autotag", aiH.AutoTag)
 		protected.POST("/documents/:document_id/grammar", aiH.CheckGrammar)
 		protected.POST("/ai/draft-legal", aiH.DraftLegalDocument)
+		protected.POST("/ai/complaint-reply", aiH.ComplaintReplyGenerator)
+		protected.GET("/ai/complaint-reply/status/:job_id", aiH.GetComplaintReplyStatus)
+		protected.POST("/ai/complaint-reply/download", aiH.DownloadReplyDocx)
+		protected.POST("/ai/complaint-reply/download-pdf", aiH.DownloadReplyPDF)
 		protected.POST("/ocr/scan", aiH.ScanOCR)
 		protected.POST("/ai/compare", aiH.CompareDocuments)
-			protected.POST("/ai/help", aiH.HelpChat)
+		protected.POST("/ai/help", aiH.HelpChat)
 		protected.GET("/documents/:document_id/search", searchH.SearchInDocument)
 
 		// Chat
 		protected.POST("/documents/:document_id/chat", aiH.StartChat)
+		protected.GET("/documents/:document_id/chat/sessions", aiH.ListChatSessions)
 		protected.POST("/chat/:session_id/message", aiH.SendMessage)
 		protected.GET("/chat/:session_id/history", aiH.GetChatHistory)
+		protected.DELETE("/chat/:session_id", aiH.DeleteChatSession)
 
 		// Semantic search + RAG
 		protected.GET("/search", searchH.Search)
@@ -289,6 +333,10 @@ func main() {
 		protected.DELETE("/matters/:matter_id", matterH.Delete)
 		protected.POST("/matters/:matter_id/documents", matterH.AddDocument)
 		protected.DELETE("/matters/:matter_id/documents/:doc_id", matterH.RemoveDocument)
+
+		// Payments (credit recharge via Razorpay)
+		protected.POST("/payments/razorpay/create-order", paymentH.CreateOrder)
+		protected.POST("/payments/razorpay/verify", paymentH.Verify)
 	}
 
 	// Admin routes — require admin role
@@ -304,13 +352,16 @@ func main() {
 		})
 	}
 
+	// Allow large file uploads (up to 500 MB buffered to disk by Gin).
+	router.MaxMultipartMemory = 500 << 20
+
 	// ─── 17. Start server with graceful shutdown ──────────────────────────────────
 	srv := &http.Server{
-		Addr:         fmt.Sprintf(":%s", cfg.App.Port),
-		Handler:      router,
-		ReadTimeout:  30 * time.Second,
-		WriteTimeout: 120 * time.Second, // longer for AI requests
-		IdleTimeout:  60 * time.Second,
+		Addr:              fmt.Sprintf(":%s", cfg.App.Port),
+		Handler:           router,
+		ReadHeaderTimeout: 10 * time.Second,  // protect against slow-header attacks only
+		WriteTimeout:      300 * time.Second, // 5 min for AI responses
+		IdleTimeout:       120 * time.Second,
 	}
 
 	// Start in goroutine so we can listen for shutdown signal

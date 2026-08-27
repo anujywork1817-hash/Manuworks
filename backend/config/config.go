@@ -13,6 +13,7 @@ import (
 // Config holds all application configuration loaded from environment variables
 type Config struct {
     Groq    GroqConfig
+    Claude  ClaudeConfig
 	App      AppConfig
 	Postgres PostgresConfig
 	Redis    RedisConfig
@@ -25,6 +26,7 @@ type Config struct {
 	Security SecurityConfig
 	Log      LogConfig
 	Swagger  SwaggerConfig
+	Razorpay RazorpayConfig
 }
 
 type AppConfig struct {
@@ -148,6 +150,11 @@ type SwaggerConfig struct {
 	BasePath string
 }
 
+type RazorpayConfig struct {
+	KeyID     string
+	KeySecret string
+}
+
 // ============================================================
 //  Singleton
 // ============================================================
@@ -200,11 +207,29 @@ func Load() *Config {
 		},
 
 		Groq: GroqConfig{
-            APIKey: getStr("GROQ_API_KEY", ""),
-            Model:  getStr("GROQ_MODEL", "llama-3.3-70b-versatile"),
+			APIKey: getStr("GROQ_API_KEY", ""),
+			APIKeys: func() []string {
+				// Collect GROQ_API_KEY_2 … GROQ_API_KEY_5, skip blanks.
+				extra := []string{}
+				for i := 2; i <= 5; i++ {
+					if k := getStr(fmt.Sprintf("GROQ_API_KEY_%d", i), ""); k != "" {
+						extra = append(extra, k)
+					}
+				}
+				return extra
+			}(),
+			Model: getStr("GROQ_MODEL", "openai/gpt-oss-120b"),
+		},
+        Claude: ClaudeConfig{
+            APIKey: getStr("ANTHROPIC_API_KEY", ""),
+            Model:  getStr("CLAUDE_MODEL", "claude-opus-5"),
         },
         Gemini: GeminiConfig{
-			APIKey:              getStrRequired("GEMINI_API_KEY"),
+			// Optional for local/dev runs with only a Groq key configured —
+			// Gemini-backed features (semantic search, embeddings) are
+			// skipped at startup instead of the app refusing to boot when
+			// this is blank.
+			APIKey:              getStr("GEMINI_API_KEY", ""),
 			Model:               getStr("GEMINI_MODEL", "gemini-1.5-flash"),
 			ProModel:            getStr("GEMINI_PRO_MODEL", "gemini-1.5-pro"),
 			EmbeddingModel:      getStr("GEMINI_EMBEDDING_MODEL", "text-embedding-004"),
@@ -225,7 +250,7 @@ func Load() *Config {
 		Storage: StorageConfig{
 			Type:         getStr("STORAGE_TYPE", "local"),
 			LocalPath:    getStr("STORAGE_LOCAL_PATH", "./storage"),
-			MaxFileSize:  int64(getInt("STORAGE_MAX_FILE_SIZE", 52428800)),
+			MaxFileSize:  int64(getInt("STORAGE_MAX_FILE_SIZE", 524288000)),
 			AllowedTypes: getStringSlice("STORAGE_ALLOWED_TYPES", []string{"pdf", "docx", "doc", "txt", "png", "jpg", "jpeg"}),
 		},
 
@@ -268,6 +293,11 @@ func Load() *Config {
 			Enabled:  getBool("SWAGGER_ENABLED", true),
 			Host:     getStr("SWAGGER_HOST", "localhost:8080"),
 			BasePath: getStr("SWAGGER_BASE_PATH", "/api/v1"),
+		},
+
+		Razorpay: RazorpayConfig{
+			KeyID:     getStr("RAZORPAY_KEY_ID", ""),
+			KeySecret: getStr("RAZORPAY_KEY_SECRET", ""),
 		},
 	}
 
@@ -391,7 +421,14 @@ func trimSpace(s string) string {
 
 
 type GroqConfig struct {
+    APIKey  string   // primary key (GROQ_API_KEY)
+    APIKeys []string // additional keys for rotation (GROQ_API_KEY_2 … _5)
+    Model   string
+}
+
+// ClaudeConfig holds the primary AI provider's settings. Groq (above) is
+// used as the automatic fallback whenever Claude is unset or rate-limited.
+type ClaudeConfig struct {
     APIKey string
     Model  string
 }
-

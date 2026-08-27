@@ -50,13 +50,15 @@ const _docTypes = [
 
 class _PromptTemplate {
   final String title;
+  final String category;
   final String prompt;
-  const _PromptTemplate(this.title, this.prompt);
+  const _PromptTemplate(this.title, this.category, this.prompt);
 }
 
 const kDraftPromptTemplates = [
+  // ── Pleadings & Court Filings ──────────────────────────────────────────
   _PromptTemplate(
-    'Writ Petition — Service Termination',
+    'Writ Petition — Service Termination', 'Pleadings & Court Filings',
     'Draft a Writ Petition under Article 226 challenging the wrongful '
     'termination of the petitioner\'s employment. Include: petitioner\'s '
     'designation and years of service, date and grounds of termination, '
@@ -64,53 +66,311 @@ const kDraftPromptTemplates = [
     'relief sought — reinstatement with full back wages.',
   ),
   _PromptTemplate(
-    'Civil Plaint — Recovery of Money',
+    'Civil Plaint — Recovery of Money', 'Pleadings & Court Filings',
     'Draft a Civil Suit for recovery of money against the defendant for '
     'an outstanding loan/business debt. Include: the amount due, date of '
     'the transaction/agreement, repeated demands made for repayment, and '
     'the relief sought — recovery of the principal amount with interest.',
   ),
   _PromptTemplate(
-    'Written Statement — Reply to Plaint',
+    'Written Statement — Reply to Plaint', 'Pleadings & Court Filings',
     'Draft a Written Statement in reply to a Civil Plaint. Include: '
     'preliminary objections (maintainability, limitation, jurisdiction), '
     'a para-wise reply admitting/denying the plaint\'s averments, and the '
     'defendant\'s version of facts.',
   ),
   _PromptTemplate(
-    'Legal Notice — Cheque Dishonour (Sec. 138 NI Act)',
+    'Legal Notice — Cheque Dishonour (Sec. 138 NI Act)', 'Pleadings & Court Filings',
     'Draft a Legal Notice under Section 138 of the Negotiable Instruments '
     'Act for dishonour of a cheque. Include: cheque number, date and '
     'amount, date of dishonour and the reason given by the bank, and a '
     'demand for payment within 15 days failing which criminal action will follow.',
   ),
   _PromptTemplate(
-    'Bail Application — Regular Bail',
+    'Bail Application — Regular Bail', 'Pleadings & Court Filings',
     'Draft a Regular Bail Application under Section 439 CrPC. Include: '
     'FIR number, police station and sections invoked, date of arrest, '
     'period of custody so far, and grounds for bail — no flight risk, no '
     'tampering with evidence, and cooperation with the investigation.',
   ),
   _PromptTemplate(
-    'Affidavit — Sworn Statement of Facts',
+    'Affidavit — Sworn Statement of Facts', 'Pleadings & Court Filings',
     'Draft an Affidavit affirming a sworn statement of facts to be filed '
     'before the court. Include: the deponent\'s name, address and '
     'occupation, the facts being affirmed on personal knowledge, and a '
     'verification clause.',
   ),
   _PromptTemplate(
-    'Anticipatory Bail Application',
+    'Anticipatory Bail Application', 'Pleadings & Court Filings',
     'Draft an Anticipatory Bail Application under Section 438 CrPC. '
     'Include: apprehension of arrest and the FIR/complaint details, '
     'grounds showing the accusation is false or motivated, and an '
     'undertaking to cooperate with the investigation.',
   ),
   _PromptTemplate(
-    'First Appeal — Against Trial Court Judgment',
+    'First Appeal — Against Trial Court Judgment', 'Pleadings & Court Filings',
     'Draft a First Appeal challenging the judgment and decree of the '
     'trial court. Include: brief facts of the original suit, the '
     'findings of the trial court being challenged, the grounds of '
     'appeal, and the relief sought — setting aside/modifying the judgment.',
+  ),
+
+  // ── Contract Drafting & Review ──────────────────────────────────────────
+  _PromptTemplate(
+    'Franchise Agreement', 'Contract Drafting & Review',
+    'Draft a comprehensive Franchise Agreement under Indian law between a '
+    'Franchisor and Franchisee. Include franchise licensing rights, '
+    'territorial exclusivity, royalties and fee structure, operational '
+    'standards, brand usage guidelines, intellectual property protection, '
+    'training and ongoing support obligations, quality control and audit '
+    'rights, marketing and advertising requirements, confidentiality and '
+    'non-compete obligations, compliance with applicable laws, renewal and '
+    'transfer rights, default and termination provisions, post-termination '
+    'restrictions, indemnities, limitation of liability, and dispute '
+    'resolution through arbitration. Draft in a commercially balanced '
+    'manner suitable for franchise businesses operating in India.',
+  ),
+  _PromptTemplate(
+    'NDA Review', 'Contract Drafting & Review',
+    'Review this Non-Disclosure Agreement from the perspective of '
+    '[Disclosing Party/Receiving Party] under Indian law. Identify '
+    'one-sided confidentiality obligations, overly broad or vague '
+    'definitions of confidential information, excessive survival periods, '
+    'impractical compliance requirements, inadequate exceptions to '
+    'confidentiality, and weak remedies for breach. Assess enforceability, '
+    'commercial reasonableness, operational risks, and compliance '
+    'concerns, and provide clause-by-clause recommendations to make the '
+    'NDA balanced, practical, and industry-standard.',
+  ),
+
+  // ── Litigation Strategy and Argument Structuring ────────────────────────
+  _PromptTemplate(
+    'Preliminary Litigation Strategy', 'Litigation Strategy & Argument Structuring',
+    'Act as senior litigation counsel representing [Client]. Develop a '
+    'comprehensive litigation strategy based on the facts provided. '
+    'Identify causes of action, jurisdiction, procedural requirements, '
+    'strengths and weaknesses of the case, key documentary and oral '
+    'evidence, anticipated defenses, interim relief options, litigation '
+    'risks, settlement opportunities, and a step-by-step roadmap to '
+    'maximise the client\'s chances of success.',
+  ),
+  _PromptTemplate(
+    'Bail Strategy', 'Litigation Strategy & Argument Structuring',
+    'Act as senior criminal counsel representing the Accused and develop a '
+    'comprehensive strategy for seeking bail under Indian criminal law. '
+    'Analyse the nature and gravity of allegations, statutory restrictions '
+    'on bail, stage of investigation, evidentiary strength, role '
+    'attributed to the accused, criminal antecedents, flight risk, '
+    'possibility of tampering with evidence or influencing witnesses, '
+    'custodial interrogation requirements, delay in investigation or '
+    'trial, and parity with co-accused. Examine applicable constitutional '
+    'principles relating to personal liberty under Article 21, relevant '
+    'provisions of the BNSS/BNS and special statutes (if applicable), and '
+    'recent Supreme Court and High Court precedents. Prepare structured '
+    'oral and written arguments, anticipate counterarguments from the '
+    'opposing side, identify weaknesses in the case, recommend supporting '
+    'documents and evidence, assess the likelihood of success, and suggest '
+    'appropriate bail conditions that strengthen the client\'s position '
+    'before the court.',
+  ),
+  _PromptTemplate(
+    'Litigation Risk Assessment', 'Litigation Strategy & Argument Structuring',
+    'Conduct a litigation risk assessment. Identify legal, factual, '
+    'procedural, evidentiary, and practical risks. Estimate the '
+    'probability of success on each major issue and recommend strategic '
+    'actions to improve the client\'s position before litigation proceeds.',
+  ),
+  _PromptTemplate(
+    'Commercial Disputes Strategy', 'Litigation Strategy & Argument Structuring',
+    'Act as lead commercial litigator. Develop a litigation strategy for a '
+    'commercial dispute involving contractual breaches, payment defaults, '
+    'business losses, or commercial misconduct. Identify key contractual '
+    'provisions, evidentiary requirements, interim remedies, recovery '
+    'mechanisms, and commercial considerations affecting litigation '
+    'strategy.',
+  ),
+  _PromptTemplate(
+    'Plaintiff Strategy', 'Litigation Strategy & Argument Structuring',
+    'Act as lead counsel for the Plaintiff/Petitioner and develop a '
+    'comprehensive litigation strategy based on the facts, applicable law, '
+    'and available evidence. Identify the strongest causes of action, key '
+    'issues for adjudication, evidentiary strengths and weaknesses, and '
+    'likely procedural objections. Formulate persuasive legal arguments, '
+    'anticipate defence strategies, and recommend measures to strengthen '
+    'the case. Identify the most effective interim and final reliefs to be '
+    'sought and develop a roadmap to maximise the chances of success.',
+  ),
+  _PromptTemplate(
+    'Defendant Strategy', 'Litigation Strategy & Argument Structuring',
+    'Act as senior defence counsel. Develop a comprehensive defence '
+    'strategy by identifying factual weaknesses, legal defences, '
+    'jurisdictional objections, limitation issues, procedural defects, '
+    'evidentiary challenges, and alternative interpretations of law. '
+    'Recommend the strongest arguments to defeat or minimise the claims.',
+  ),
+  _PromptTemplate(
+    'Opening Statement — Trade Secret Misappropriation', 'Litigation Strategy & Argument Structuring',
+    'Structure the opening submissions for a trade secret and confidential '
+    'information misappropriation dispute under Indian law. Develop a '
+    'compelling case narrative highlighting the confidential nature of the '
+    'information, unlawful acquisition or use, resulting commercial harm, '
+    'breach of contractual and fiduciary obligations, and the urgency of '
+    'injunctive relief. Frame persuasive arguments supporting damages, '
+    'account of profits, and permanent injunctions.',
+  ),
+  _PromptTemplate(
+    'Closing Arguments — Breach of Contract', 'Litigation Strategy & Argument Structuring',
+    'Structure the closing arguments for a breach of contract dispute '
+    'under Indian law. Develop a persuasive narrative linking the '
+    'defendant\'s contractual breaches to the losses suffered by the '
+    'claimant. Highlight key evidence, credibility of witnesses, '
+    'compliance by the claimant, applicable legal principles, and '
+    'entitlement to damages, specific performance, or other reliefs.',
+  ),
+  _PromptTemplate(
+    'Cross-Examination Strategy', 'Litigation Strategy & Argument Structuring',
+    'Prepare a cross-examination strategy for a hostile witness in '
+    'civil/criminal proceedings. Identify contradictions, prior '
+    'inconsistent statements, bias indicators, credibility concerns, and '
+    'admissions that strengthen the client\'s case.',
+  ),
+  _PromptTemplate(
+    'Interim-Relief Strategy', 'Litigation Strategy & Argument Structuring',
+    'Develop an interim injunction strategy under Indian law. Analyse '
+    'prima facie case, balance of convenience, irreparable harm, urgency '
+    'factors, evidentiary support, and likely objections. Recommend the '
+    'strongest interim reliefs available.',
+  ),
+  _PromptTemplate(
+    'Stay Order Strategy', 'Litigation Strategy & Argument Structuring',
+    'Prepare a litigation strategy for obtaining or opposing a stay '
+    'order/status quo direction. Analyse procedural requirements, '
+    'prejudice to parties, urgency, judicial precedents, and tactical '
+    'advantages arising from interim protection.',
+  ),
+  _PromptTemplate(
+    'Defend Judgment on Appeal', 'Litigation Strategy & Argument Structuring',
+    'Develop a strategy to defend the impugned judgment before the '
+    'appellate court. Identify findings that should be preserved, '
+    'favourable precedents, evidentiary support, and responses to '
+    'anticipated appellate grounds.',
+  ),
+
+  // ── Legal Advisory and Risk Assessment ──────────────────────────────────
+  _PromptTemplate(
+    'General Risk Assessment', 'Legal Advisory & Risk Assessment',
+    'Conduct a comprehensive legal risk assessment of [transaction/'
+    'business activity/project] under Indian law. Identify regulatory, '
+    'contractual, commercial, operational, litigation, and compliance '
+    'risks. Assess the likelihood and impact of each risk, identify '
+    'applicable statutory requirements, and recommend practical mitigation '
+    'measures and compliance strategies.',
+  ),
+  _PromptTemplate(
+    'Regulatory Legal Advisory', 'Legal Advisory & Risk Assessment',
+    'Prepare a client-ready legal advisory on the regulatory requirements '
+    'applicable to [business activity/industry] in India. Identify key '
+    'licences, registrations, approvals, reporting obligations, '
+    'sector-specific regulations, penalties for non-compliance, and '
+    'practical recommendations to ensure ongoing compliance.',
+  ),
+  _PromptTemplate(
+    'Settlement vs. Litigation Advisory', 'Legal Advisory & Risk Assessment',
+    'Prepare a strategic legal advisory comparing settlement and '
+    'litigation options. Assess legal merits, evidentiary position, '
+    'financial exposure, procedural risks, enforcement considerations, '
+    'reputational impact, and business objectives. Recommend the most '
+    'commercially and legally advantageous approach.',
+  ),
+  _PromptTemplate(
+    'Corporate Governance Risk Assessment', 'Legal Advisory & Risk Assessment',
+    'Conduct a legal risk assessment of the company\'s governance '
+    'framework under the Companies Act, 2013. Analyse board processes, '
+    'director duties, related-party transactions, compliance systems, '
+    'disclosure obligations, and shareholder rights. Recommend governance '
+    'improvements and risk controls.',
+  ),
+  _PromptTemplate(
+    'Influencer Marketing Risk Assessment', 'Legal Advisory & Risk Assessment',
+    'Conduct a legal risk assessment of an influencer marketing campaign '
+    'under Indian law. Analyse ASCI compliance, advertising disclosures, '
+    'consumer protection risks, intellectual property issues, reputational '
+    'concerns, exclusivity restrictions, and contractual liabilities. '
+    'Recommend measures to minimise regulatory and commercial exposure.',
+  ),
+  _PromptTemplate(
+    'Multi-Jurisdiction Compliance Framework', 'Legal Advisory & Risk Assessment',
+    'Conduct a legal risk assessment for a business (explain the nature of '
+    'business) operating across multiple Indian states. Identify licensing '
+    'requirements, tax implications, employment obligations, data '
+    'protection issues, regulatory overlaps, and enforcement risks. '
+    'Recommend a coordinated compliance strategy.',
+  ),
+  _PromptTemplate(
+    'Foreign Investment Compliance Review', 'Legal Advisory & Risk Assessment',
+    'Prepare a legal advisory on foreign investment into an Indian entity. '
+    'Assess FEMA compliance, FDI policy restrictions, sectoral caps, '
+    'pricing guidelines, reporting obligations, and regulatory approvals. '
+    'Recommend a legally compliant transaction structure.',
+  ),
+  _PromptTemplate(
+    'Data Breach Advisory', 'Legal Advisory & Risk Assessment',
+    'Conduct a legal risk assessment following a cybersecurity incident or '
+    'data breach. Analyse notification obligations, regulatory exposure, '
+    'contractual liabilities, consumer claims, reputational risks, and '
+    'potential litigation. Recommend immediate response measures and '
+    'long-term compliance controls.',
+  ),
+  _PromptTemplate(
+    'Real Estate Transaction Advisory', 'Legal Advisory & Risk Assessment',
+    'Draft a legal advisory on the proposed real estate transaction. '
+    'Assess title risks, regulatory approvals, land-use restrictions, RERA '
+    'compliance, encumbrances, litigation exposure, and contractual '
+    'protections. Recommend practical steps to mitigate transactional '
+    'risk.',
+  ),
+  _PromptTemplate(
+    'ESG Compliance Advisory', 'Legal Advisory & Risk Assessment',
+    'Prepare a legal advisory on ESG and sustainability obligations '
+    'applicable to the company. Assess environmental, governance, labour & '
+    'disclosure related compliances and reporting risks. Identify emerging '
+    'regulatory requirements and recommend practical compliance and '
+    'governance measures.',
+  ),
+  _PromptTemplate(
+    'E-Commerce Compliance Advisory', 'Legal Advisory & Risk Assessment',
+    'Prepare a legal advisory for an e-commerce platform operating in '
+    'India. Assess compliance requirements under consumer protection laws, '
+    'intermediary guidelines, data privacy regulations, terms & '
+    'conditions, advertising standards, payment regulations, and platform '
+    'liability frameworks. Recommend practical compliance measures.',
+  ),
+  _PromptTemplate(
+    'Joint Venture Risk Assessment', 'Legal Advisory & Risk Assessment',
+    'Conduct a legal and strategic risk assessment of a proposed joint '
+    'venture. Analyse governance rights, capital contributions, deadlock '
+    'mechanisms, exit rights, intellectual property ownership, regulatory '
+    'approvals, tax implications, and dispute risks. Recommend safeguards '
+    'to protect the client\'s interests.',
+  ),
+
+  // ── Due Diligence & Transaction Support ─────────────────────────────────
+  _PromptTemplate(
+    'Due Diligence Checklist — Acquisition', 'Due Diligence & Transaction Support',
+    'Prepare a legal due diligence checklist for the acquisition of an '
+    'Indian company. Cover corporate records, material contracts, '
+    'financing arrangements, licences, litigation, employment matters, '
+    'intellectual property, loans and liabilities, data privacy, tax, and '
+    'regulatory compliance. Categorise issues by risk level and recommend '
+    'mitigation measures.',
+  ),
+  _PromptTemplate(
+    'Change of Control Review', 'Due Diligence & Transaction Support',
+    'Review material contracts for change-of-control implications. '
+    'Identify consent requirements, termination rights, assignment '
+    'restrictions, acceleration clauses, and regulatory approvals '
+    'triggered by the proposed transaction. Recommend strategies to '
+    'mitigate transaction execution risks.',
   ),
 ];
 
@@ -617,42 +877,63 @@ class _DraftDocumentScreenState extends ConsumerState<DraftDocumentScreen> {
             ),
             const Divider(height: 1),
             Expanded(
-              child: ListView.separated(
-                controller: scrollController,
-                padding: const EdgeInsets.all(16),
-                itemCount: kDraftPromptTemplates.length,
-                separatorBuilder: (_, __) => const SizedBox(height: 10),
-                itemBuilder: (_, i) {
-                  final p = kDraftPromptTemplates[i];
-                  return InkWell(
-                    borderRadius: BorderRadius.circular(12),
-                    onTap: () {
-                      _promptCtrl.text = p.prompt;
-                      _promptCtrl.selection = TextSelection.collapsed(offset: p.prompt.length);
-                      Navigator.of(ctx).pop();
-                    },
-                    child: Container(
-                      width: double.infinity,
-                      padding: const EdgeInsets.all(14),
-                      decoration: BoxDecoration(
-                        color: AppColors.surface,
-                        borderRadius: BorderRadius.circular(12),
-                        border: Border.all(color: AppColors.outline),
+              child: Builder(builder: (_) {
+                // Group templates by category, preserving first-seen order,
+                // so the ~29-template list reads as sections instead of one
+                // long undifferentiated scroll.
+                final categories = <String>[];
+                final byCategory = <String, List<_PromptTemplate>>{};
+                for (final p in kDraftPromptTemplates) {
+                  (byCategory[p.category] ??= []).add(p);
+                  if (!categories.contains(p.category)) categories.add(p.category);
+                }
+
+                return ListView(
+                  controller: scrollController,
+                  padding: const EdgeInsets.fromLTRB(16, 16, 16, 24),
+                  children: [
+                    for (final category in categories) ...[
+                      Padding(
+                        padding: const EdgeInsets.only(bottom: 8, top: 4),
+                        child: Text(category.toUpperCase(),
+                            style: const TextStyle(fontSize: 11, fontWeight: FontWeight.w800,
+                                color: AppColors.info, letterSpacing: 0.6)),
                       ),
-                      child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-                        Text(p.title,
-                            style: const TextStyle(fontSize: 13, fontWeight: FontWeight.w700,
-                                color: AppColors.textPrimary)),
-                        const SizedBox(height: 4),
-                        Text(p.prompt,
-                            maxLines: 2,
-                            overflow: TextOverflow.ellipsis,
-                            style: const TextStyle(fontSize: 12, color: AppColors.textSecondary, height: 1.4)),
-                      ]),
-                    ),
-                  );
-                },
-              ),
+                      for (final p in byCategory[category]!) ...[
+                        InkWell(
+                          borderRadius: BorderRadius.circular(12),
+                          onTap: () {
+                            _promptCtrl.text = p.prompt;
+                            _promptCtrl.selection = TextSelection.collapsed(offset: p.prompt.length);
+                            Navigator.of(ctx).pop();
+                          },
+                          child: Container(
+                            width: double.infinity,
+                            padding: const EdgeInsets.all(14),
+                            decoration: BoxDecoration(
+                              color: AppColors.surface,
+                              borderRadius: BorderRadius.circular(12),
+                              border: Border.all(color: AppColors.outline),
+                            ),
+                            child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+                              Text(p.title,
+                                  style: const TextStyle(fontSize: 13, fontWeight: FontWeight.w700,
+                                      color: AppColors.textPrimary)),
+                              const SizedBox(height: 4),
+                              Text(p.prompt,
+                                  maxLines: 2,
+                                  overflow: TextOverflow.ellipsis,
+                                  style: const TextStyle(fontSize: 12, color: AppColors.textSecondary, height: 1.4)),
+                            ]),
+                          ),
+                        ),
+                        const SizedBox(height: 10),
+                      ],
+                      const SizedBox(height: 6),
+                    ],
+                  ],
+                );
+              }),
             ),
           ]),
         ),

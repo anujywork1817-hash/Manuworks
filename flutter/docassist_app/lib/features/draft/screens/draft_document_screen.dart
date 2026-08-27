@@ -8,6 +8,7 @@ import '../../../core/services/document_export_service.dart';
 import '../../../core/services/clipboard_helper.dart';
 import '../../../shared/widgets/feature_history_sheet.dart';
 import '../../../shared/widgets/fun_loading_word.dart';
+import '../../../shared/widgets/document_preview.dart';
 
 // ─── Document types ───────────────────────────────────────────────────────────
 
@@ -342,10 +343,31 @@ class _DraftDocumentScreenState extends ConsumerState<DraftDocumentScreen> {
     }
   }
 
+  bool _sharing = false;
+  Future<void> _shareResult() async {
+    if (_result == null) return;
+    setState(() => _sharing = true);
+    try {
+      await DocumentExportService.shareReport(
+        title: _resultTitle ?? _selected?.id ?? 'Document',
+        content: _result!,
+      );
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+          content: Text('Share failed: $e'),
+          behavior: SnackBarBehavior.floating,
+        ));
+      }
+    } finally {
+      if (mounted) setState(() => _sharing = false);
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      
+
       appBar: AppBar(
         
         elevation: 0,
@@ -689,6 +711,18 @@ class _DraftDocumentScreenState extends ConsumerState<DraftDocumentScreen> {
             ),
           ),
           OutlinedButton.icon(
+            onPressed: _sharing ? null : _shareResult,
+            icon: _sharing
+                ? const SizedBox(width: 14, height: 14,
+                    child: CircularProgressIndicator(strokeWidth: 2))
+                : const Icon(Icons.share_outlined, size: 15),
+            label: const Text('Share'),
+            style: OutlinedButton.styleFrom(
+              padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+              textStyle: const TextStyle(fontSize: 12),
+            ),
+          ),
+          OutlinedButton.icon(
             onPressed: _exportingPdf ? null : _exportPdf,
             icon: _exportingPdf
                 ? const SizedBox(width: 14, height: 14,
@@ -715,24 +749,12 @@ class _DraftDocumentScreenState extends ConsumerState<DraftDocumentScreen> {
         ]),
       ]),
     ),
-    // Document text
+    // Document text — rendered as a simulated Word/print page.
     Expanded(child: SingleChildScrollView(
       padding: const EdgeInsets.all(16),
-      child: Container(
-        width: double.infinity,
-        padding: const EdgeInsets.all(20),
-        decoration: BoxDecoration(
-          color: AppColors.surface,
-          borderRadius: BorderRadius.circular(12),
-          boxShadow: AppShadows.sm,
-        ),
-        child: SelectableText(_result!,
-            style: const TextStyle(
-              fontFamily: 'monospace',
-              fontSize: 13,
-              height: 1.7,
-              color: AppColors.primaryLight,
-            )),
+      child: DocumentPreview(
+        title: _resultTitle ?? _selected?.id ?? 'Document',
+        content: _result!,
       ),
     )),
   ]);

@@ -9,6 +9,7 @@ import '../../../core/services/clipboard_helper.dart';
 import '../../../core/services/document_export_service.dart';
 import '../../../shared/widgets/feature_history_sheet.dart';
 import '../../../shared/widgets/fun_loading_word.dart';
+import '../../../shared/widgets/document_preview.dart';
 
 class OcrScanScreen extends StatefulWidget {
   const OcrScanScreen({super.key});
@@ -125,6 +126,13 @@ class _OcrScanScreenState extends State<OcrScanScreen> {
             title: 'OCR Scan — ${_image?.name ?? 'Result'}', content: _text!),
         busyMessage: 'Preparing PDF...',
         doneMessage: 'PDF ready to save or share',
+      );
+
+  Future<void> _shareResult() => _handleExport(
+        () => DocumentExportService.shareReport(
+            title: 'OCR Scan — ${_image?.name ?? 'Result'}', content: _text!),
+        busyMessage: 'Preparing to share...',
+        doneMessage: 'Choose where to share (WhatsApp, Gmail, etc.)',
       );
 
   Future<void> _exportDocx() => _handleExport(
@@ -287,13 +295,18 @@ class _OcrScanScreenState extends State<OcrScanScreen> {
             _confidence >= 80 ? AppColors.success : AppColors.warning),
         const Spacer(),
         IconButton(
+          icon: const Icon(Icons.share_outlined, size: 18),
+          tooltip: 'Share (WhatsApp, Gmail, etc.)',
+          onPressed: _shareResult,
+        ),
+        IconButton(
           icon: const Icon(Icons.picture_as_pdf_outlined, size: 18),
-          tooltip: 'Export as PDF',
+          tooltip: 'Download as PDF',
           onPressed: _exportPdf,
         ),
         IconButton(
           icon: const Icon(Icons.description_outlined, size: 18),
-          tooltip: 'Export as Word (DOCX)',
+          tooltip: 'Download as Word (DOCX)',
           onPressed: _exportDocx,
         ),
         OutlinedButton.icon(
@@ -324,29 +337,24 @@ class _OcrScanScreenState extends State<OcrScanScreen> {
               style: TextStyle(fontSize: 12, fontWeight: FontWeight.w600,
                   color: AppColors.textSecondary, letterSpacing: 0.4)),
         ),
-        Container(
-        width: double.infinity,
-        padding: const EdgeInsets.all(20),
-        decoration: BoxDecoration(
-          color: AppColors.surface,
-          borderRadius: BorderRadius.circular(12),
-          boxShadow: AppShadows.sm,
-        ),
-        child: _text!.isEmpty
-            ? const Center(child: Padding(
-                padding: EdgeInsets.all(24),
-                child: Text('No text could be extracted from this image.\n'
-                    'Try a clearer image with better lighting.',
-                    textAlign: TextAlign.center,
-                    style: TextStyle(color: AppColors.textTertiary, fontSize: 14)),
-              ))
-            : SelectableText(_text!,
-                style: const TextStyle(
-                  fontSize: 13,
-                  height: 1.75,
-                  color: AppColors.primaryLight,
+        _text!.isEmpty
+            ? Container(
+                width: double.infinity,
+                padding: const EdgeInsets.all(20),
+                decoration: BoxDecoration(
+                  color: AppColors.surface,
+                  borderRadius: BorderRadius.circular(12),
+                  boxShadow: AppShadows.sm,
+                ),
+                child: const Center(child: Padding(
+                  padding: EdgeInsets.all(24),
+                  child: Text('No text could be extracted from this image.\n'
+                      'Try a clearer image with better lighting.',
+                      textAlign: TextAlign.center,
+                      style: TextStyle(color: AppColors.textTertiary, fontSize: 14)),
                 )),
-        ),
+              )
+            : DocumentPreview(title: 'OCR Scan — ${_image?.name ?? 'Result'}', content: _text!),
       ]),
     )),
   ]);

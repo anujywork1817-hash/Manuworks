@@ -264,6 +264,34 @@ class DocumentExportService {
     );
   }
 
+  /// Opens the OS/browser native share sheet with the report as a PDF
+  /// attachment — this is what surfaces WhatsApp, Gmail, and every other
+  /// installed app as a share target on mobile/desktop. On web it relies on
+  /// the browser's Web Share API (supported on most mobile browsers; where
+  /// unsupported, falls back to just downloading the PDF so the user still
+  /// gets the file to share manually).
+  static Future<void> shareReport({
+    required String title,
+    required String content,
+  }) async {
+    final doc = await _buildReportPdf(title: title, content: content);
+    final bytes = await doc.save();
+    final fileName = '${_safeFileName(title)}.pdf';
+    final xfile = XFile.fromData(bytes, name: fileName, mimeType: 'application/pdf');
+    if (!kIsWeb) {
+      await Share.shareXFiles([xfile], text: title, subject: title);
+      return;
+    }
+    // Web: try the native Web Share API (works on most mobile browsers and
+    // shows WhatsApp/Gmail/etc as targets); fall back to a plain download
+    // where the browser doesn't support sharing files at all.
+    try {
+      await Share.shareXFiles([xfile], text: title, subject: title);
+    } catch (_) {
+      downloadBytes(bytes, fileName, 'application/pdf');
+    }
+  }
+
   /// Renders an AI-generated report to a minimal .docx and opens the
   /// share/save sheet (or triggers a download on web). Used by the "DOCX"
   /// toolbar action.

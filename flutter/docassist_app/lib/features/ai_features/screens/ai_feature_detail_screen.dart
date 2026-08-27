@@ -5,7 +5,6 @@ import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:file_picker/file_picker.dart';
 import 'package:shared_preferences/shared_preferences.dart';
-import 'package:flutter_markdown/flutter_markdown.dart';
 import '../../../core/services/usage_tracker.dart';
 import '../../../core/services/ai_history_service.dart';
 import '../../../core/services/document_export_service.dart';
@@ -16,6 +15,7 @@ import '../../documents/providers/document_provider.dart';
 import '../../ai_chat/providers/ai_provider.dart';
 import '../../../shared/widgets/feature_history_sheet.dart';
 import '../../../shared/widgets/fun_loading_word.dart';
+import '../../../shared/widgets/document_preview.dart';
 
 /// Title + one-line subtitle shown at the top of each AI feature screen,
 /// mirroring the "Generate Summary — Summarize documents in seconds and
@@ -344,6 +344,13 @@ class _AiFeatureDetailScreenState extends ConsumerState<AiFeatureDetailScreen> {
             title: _reportTitle, content: _result!),
         busyMessage: 'Preparing Word file...',
         doneMessage: 'DOCX ready to save or share',
+      );
+
+  Future<void> _shareReport() => _handleReportAction(
+        () => DocumentExportService.shareReport(
+            title: _reportTitle, content: _result!),
+        busyMessage: 'Preparing to share...',
+        doneMessage: 'Choose where to share (WhatsApp, Gmail, etc.)',
       );
 
   Future<void> _downloadReport() => _handleReportAction(
@@ -683,12 +690,22 @@ class _AiFeatureDetailScreenState extends ConsumerState<AiFeatureDetailScreen> {
                 ),
               ]),
               const SizedBox(height: 4),
-              // Report actions toolbar — PDF, Print, Email, DOCX, Download, Copy.
+              // Report actions toolbar — Share, PDF, Word, Print, Email, Copy.
               Row(mainAxisAlignment: MainAxisAlignment.end, children: [
                 IconButton(
+                  icon: const Icon(Icons.share_outlined, size: 18),
+                  tooltip: 'Share (WhatsApp, Gmail, etc.)',
+                  onPressed: _shareReport,
+                ),
+                IconButton(
                   icon: const Icon(Icons.picture_as_pdf_outlined, size: 18),
-                  tooltip: 'Export as PDF',
+                  tooltip: 'Download as PDF',
                   onPressed: _exportPdf,
+                ),
+                IconButton(
+                  icon: const Icon(Icons.description_outlined, size: 18),
+                  tooltip: 'Download as Word (DOCX)',
+                  onPressed: _exportDocx,
                 ),
                 IconButton(
                   icon: const Icon(Icons.print_outlined, size: 18),
@@ -701,16 +718,6 @@ class _AiFeatureDetailScreenState extends ConsumerState<AiFeatureDetailScreen> {
                   onPressed: _emailReport,
                 ),
                 IconButton(
-                  icon: const Icon(Icons.description_outlined, size: 18),
-                  tooltip: 'Export as Word (DOCX)',
-                  onPressed: _exportDocx,
-                ),
-                IconButton(
-                  icon: const Icon(Icons.download_outlined, size: 18),
-                  tooltip: 'Download',
-                  onPressed: _downloadReport,
-                ),
-                IconButton(
                   icon: const Icon(Icons.copy, size: 16),
                   tooltip: 'Copy result',
                   onPressed: () {
@@ -720,18 +727,8 @@ class _AiFeatureDetailScreenState extends ConsumerState<AiFeatureDetailScreen> {
                   },
                 ),
               ]),
-              const Divider(),
-              MarkdownBody(
-                data: _result!,
-                selectable: true,
-                styleSheet: MarkdownStyleSheet.fromTheme(theme).copyWith(
-                  p: theme.textTheme.bodyMedium,
-                  h1: theme.textTheme.titleMedium?.copyWith(fontWeight: FontWeight.bold),
-                  h2: theme.textTheme.titleSmall?.copyWith(fontWeight: FontWeight.bold),
-                  strong: const TextStyle(fontWeight: FontWeight.bold),
-                  listBullet: theme.textTheme.bodyMedium,
-                ),
-              ),
+              const SizedBox(height: 8),
+              DocumentPreview(title: _reportTitle, content: _result!),
             ]),
           )),
 

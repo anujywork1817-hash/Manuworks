@@ -340,7 +340,7 @@ func (s *aiService) ProcessDocument(ctx context.Context, userID, docID uuid.UUID
 		aiWG         sync.WaitGroup
 	)
 	aiWG.Add(5)
-	go func() { defer aiWG.Done(); summaryRes, _ = s.groqClient.Summarize(ctx, truncate(extractedText, 15000)) }()
+	go func() { defer aiWG.Done(); summaryRes, _ = s.groqClient.Summarize(ctx, truncate(extractedText, 60000)) }()
 	go func() { defer aiWG.Done(); keyPointsRes, _ = s.groqClient.ExtractKeyPoints(ctx, truncate(extractedText, 12000)) }()
 	go func() { defer aiWG.Done(); timelineRes, _ = s.groqClient.ExtractTimeline(ctx, truncate(extractedText, 15000)) }()
 	go func() { defer aiWG.Done(); actionRes, _ = s.groqClient.ExtractActionItems(ctx, truncate(extractedText, 12000)) }()
@@ -418,7 +418,7 @@ func (s *aiService) Summarize(ctx context.Context, userID, docID uuid.UUID) (*gr
 	if doc.AiSummary != "" {
 		return &groq.SummaryResponse{Summary: doc.AiSummary, KeyPoints: []string{}, WordCount: doc.WordCount}, nil
 	}
-	return s.groqClient.Summarize(ctx, truncate(doc.OcrText, 15000))
+	return s.groqClient.Summarize(ctx, truncate(doc.OcrText, 60000))
 }
 
 // SummarizeText summarizes raw text directly (used for OCR results that
@@ -429,7 +429,7 @@ func (s *aiService) SummarizeText(ctx context.Context, text string) (*groq.Summa
 	if text == "" {
 		return &groq.SummaryResponse{Summary: "", KeyPoints: []string{}, WordCount: 0}, nil
 	}
-	return s.groqClient.Summarize(ctx, truncate(text, 15000))
+	return s.groqClient.Summarize(ctx, truncate(text, 60000))
 }
 
 func (s *aiService) AnswerQuestion(ctx context.Context, userID, docID uuid.UUID, question string) (*groq.QAResponse, error) {

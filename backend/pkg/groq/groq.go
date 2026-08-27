@@ -522,13 +522,17 @@ func parseJSON(text string) string {
 
 func (c *Client) Summarize(ctx context.Context, text string) (*SummaryResponse, error) {
 	system := `You are a document analysis assistant. Always respond with valid JSON only, no markdown.` + indiaDocEngRule
-	prompt := fmt.Sprintf(`Summarize this document and extract key points. Respond ONLY with this JSON:
-{"summary":"<2-3 sentence summary>","key_points":["point1","point2","point3"],"word_count":%d}
+	prompt := fmt.Sprintf(`Summarize this document. The document may be anywhere from 1 page to 20+ pages long.
+Regardless of the document's length, write a single condensed summary of about 400-600 words (roughly
+1 to 1.5 pages) — never let the summary grow proportionally with the source length. The summary must be
+comprehensive: draw content from the beginning, middle, AND end of the document so nothing significant from
+any page or section is left out, not just the opening pages. Respond ONLY with this JSON:
+{"summary":"<400-600 word summary covering the entire document>","key_points":["point1","point2","point3"],"word_count":%d}
 
 Document:
 %s`, len(text)/5, text)
 
-	raw, err := c.generate(ctx, system, prompt, 1000)
+	raw, err := c.generate(ctx, system, prompt, 1800)
 	if err != nil {
 		return nil, fmt.Errorf("summarize: %w", err)
 	}

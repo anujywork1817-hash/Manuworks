@@ -132,6 +132,7 @@ class DashboardScreen extends ConsumerWidget {
                         title: 'Generate Summary',
                         subtitle: 'Turn long docs into concise summaries',
                         credits: UsageTracker.creditsFor('summarize'),
+                        color: const Color(0xFF2563EB), // blue
                         onTap: () => context.push('${AppRoutes.aiFeatures}/summarize'),
                         cs: cs, tt: tt,
                       )),
@@ -141,6 +142,7 @@ class DashboardScreen extends ConsumerWidget {
                         title: 'Drafter',
                         subtitle: 'Draft documents tailored to your needs',
                         credits: UsageTracker.creditsFor('draft'),
+                        color: const Color(0xFF7C3AED), // purple
                         onTap: () => context.push(AppRoutes.draft),
                         cs: cs, tt: tt,
                       )),
@@ -152,6 +154,7 @@ class DashboardScreen extends ConsumerWidget {
                         title: 'Translator',
                         subtitle: 'Translate documents instantly',
                         credits: UsageTracker.creditsFor('translate'),
+                        color: const Color(0xFF16A34A), // green
                         onTap: () => context.push('${AppRoutes.aiFeatures}/translate'),
                         cs: cs, tt: tt,
                       )),
@@ -161,6 +164,7 @@ class DashboardScreen extends ConsumerWidget {
                         title: 'OCR',
                         subtitle: 'Convert scanned docs to editable text',
                         credits: UsageTracker.creditsFor('ocr'),
+                        color: const Color(0xFFEA580C), // orange
                         onTap: () => context.push(AppRoutes.ocrScan),
                         cs: cs, tt: tt,
                       )),
@@ -172,6 +176,7 @@ class DashboardScreen extends ConsumerWidget {
                         title: 'Timeline Generator',
                         subtitle: 'Visualize events in sequence over time',
                         credits: UsageTracker.creditsFor('timeline'),
+                        color: const Color(0xFF0D9488), // teal
                         onTap: () => context.push('${AppRoutes.aiFeatures}/timeline'),
                         cs: cs, tt: tt,
                       )),
@@ -181,6 +186,7 @@ class DashboardScreen extends ConsumerWidget {
                         title: 'Ask Questions',
                         subtitle: 'Ask questions & get cited answers',
                         credits: UsageTracker.creditsFor('ai_chat'),
+                        color: const Color(0xFF4F46E5), // indigo
                         onTap: () => context.push(AppRoutes.aiChat),
                         cs: cs, tt: tt,
                       )),
@@ -192,6 +198,7 @@ class DashboardScreen extends ConsumerWidget {
                         title: 'Compare Documents',
                         subtitle: 'Compare two documents side by side',
                         credits: UsageTracker.creditsFor('compare'),
+                        color: const Color(0xFFDB2777), // pink
                         onTap: () => context.push(AppRoutes.compare),
                         cs: cs, tt: tt,
                       )),
@@ -201,6 +208,7 @@ class DashboardScreen extends ConsumerWidget {
                         title: 'Citation Verifier',
                         subtitle: 'Verify citations instantly',
                         credits: UsageTracker.creditsFor('citations'),
+                        color: const Color(0xFFDC2626), // red
                         onTap: () => context.push('${AppRoutes.aiFeatures}/citations'),
                         cs: cs, tt: tt,
                       )),
@@ -311,13 +319,14 @@ class _AiToolCard extends StatelessWidget {
   final String title, subtitle;
   final int credits;
   final String? badge; // e.g. 'NEW' / 'PRO'
+  final Color color; // distinct per-tool accent, VS Code extension-icon style
   final VoidCallback onTap;
   final ColorScheme cs;
   final TextTheme tt;
 
   const _AiToolCard({
     required this.icon, required this.title, required this.subtitle,
-    required this.credits,
+    required this.credits, required this.color,
     required this.onTap, required this.cs, required this.tt,
   }) : badge = null;
 
@@ -337,11 +346,11 @@ class _AiToolCard extends StatelessWidget {
           Container(
             width: 32, height: 32,
             decoration: BoxDecoration(
-              color: cs.primaryContainer,
+              color: color.withValues(alpha: 0.15),
               borderRadius: BorderRadius.circular(8),
             ),
             alignment: Alignment.center,
-            child: Icon(icon, color: cs.primary, size: 16),
+            child: Icon(icon, color: color, size: 16),
           ),
           if (badge != null) ...[
             const Spacer(),

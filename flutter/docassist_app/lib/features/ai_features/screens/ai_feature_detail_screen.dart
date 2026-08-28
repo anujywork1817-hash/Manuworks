@@ -180,18 +180,20 @@ class _AiFeatureDetailScreenState extends ConsumerState<AiFeatureDetailScreen> {
   /// everyone's full OCR text repeatedly is what was making this screen
   /// feel stuck on "loading" for big files.
   ///
-  /// Waits up to ~6 minutes total, backing off from a 2s to an 8s
-  /// interval, so large / scanned PDFs have realistic time to finish OCR
-  /// instead of failing after a fixed 80-second window.
+  /// Waits up to ~27 minutes total, backing off from a 2s to a 15s
+  /// interval, so a large scanned PDF (the backend's OCR timeout now
+  /// allows up to 30 minutes for a 100+ page document) has realistic time
+  /// to finish instead of the UI giving up while it's still legitimately
+  /// working.
   Future<Document> _pollUntilReady(Document doc) async {
     Document current = doc;
-    const totalAttempts = 80;
+    const totalAttempts = 150;
     for (int i = 0; i < totalAttempts; i++) {
       final delay = i < 20
           ? const Duration(seconds: 2)
-          : i < 50
+          : i < 60
               ? const Duration(seconds: 5)
-              : const Duration(seconds: 8);
+              : const Duration(seconds: 15);
       await Future.delayed(delay);
       try {
         final res = await DioClient.get('/documents/${doc.id}');

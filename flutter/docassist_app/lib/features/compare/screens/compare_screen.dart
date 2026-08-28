@@ -123,9 +123,11 @@ class _CompareScreenState extends ConsumerState<CompareScreen> {
 
     // Poll until the document is ready (or failed) — comparison needs the
     // extracted text, so the freshly-uploaded file must finish OCR first.
+    // Waits up to ~27 minutes (matching the backend's OCR timeout) so a
+    // large scanned PDF has realistic time to finish.
     Document? readyDoc;
-    for (int i = 0; i < 40; i++) {
-      await Future.delayed(Duration(seconds: i < 10 ? 2 : 4));
+    for (int i = 0; i < 150; i++) {
+      await Future.delayed(Duration(seconds: i < 20 ? 2 : (i < 60 ? 5 : 15)));
       if (!mounted) return;
       try {
         final res = await DioClient.get('/documents/$docId');

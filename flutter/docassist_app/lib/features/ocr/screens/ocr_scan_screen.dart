@@ -354,32 +354,35 @@ class _OcrScanScreenState extends State<OcrScanScreen> {
     // Extracted text
     Expanded(child: SingleChildScrollView(
       padding: const EdgeInsets.all(16),
-      child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-        const Padding(
-          padding: EdgeInsets.only(bottom: 8, left: 4),
-          child: Text('AI Summary',
-              style: TextStyle(fontSize: 12, fontWeight: FontWeight.w600,
-                  color: AppColors.textSecondary, letterSpacing: 0.4)),
-        ),
-        _text!.isEmpty
-            ? Container(
-                width: double.infinity,
-                padding: const EdgeInsets.all(20),
-                decoration: BoxDecoration(
-                  color: AppColors.surface,
-                  borderRadius: BorderRadius.circular(12),
-                  boxShadow: AppShadows.sm,
-                ),
-                child: const Center(child: Padding(
-                  padding: EdgeInsets.all(24),
-                  child: Text('No text could be extracted from this image.\n'
-                      'Try a clearer image with better lighting.',
-                      textAlign: TextAlign.center,
-                      style: TextStyle(color: AppColors.textTertiary, fontSize: 14)),
-                )),
-              )
-            : DocumentPreview(title: 'OCR Scan — ${_image?.name ?? 'Result'}', content: _text!),
-      ]),
+      child: Center(child: ConstrainedBox(
+        constraints: const BoxConstraints(maxWidth: 820),
+        child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+          const Padding(
+            padding: EdgeInsets.only(bottom: 8, left: 4),
+            child: Text('AI Summary',
+                style: TextStyle(fontSize: 12, fontWeight: FontWeight.w600,
+                    color: AppColors.textSecondary, letterSpacing: 0.4)),
+          ),
+          _text!.isEmpty
+              ? Container(
+                  width: double.infinity,
+                  padding: const EdgeInsets.all(20),
+                  decoration: BoxDecoration(
+                    color: AppColors.surface,
+                    borderRadius: BorderRadius.circular(12),
+                    boxShadow: AppShadows.sm,
+                  ),
+                  child: const Center(child: Padding(
+                    padding: EdgeInsets.all(24),
+                    child: Text('No text could be extracted from this image.\n'
+                        'Try a clearer image with better lighting.',
+                        textAlign: TextAlign.center,
+                        style: TextStyle(color: AppColors.textTertiary, fontSize: 14)),
+                  )),
+                )
+              : DocumentPreview(title: 'OCR Scan — ${_image?.name ?? 'Result'}', content: _text!),
+        ]),
+      )),
     )),
   ]);
 

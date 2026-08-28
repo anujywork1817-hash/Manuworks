@@ -676,7 +676,9 @@ class _AiFeatureDetailScreenState extends ConsumerState<AiFeatureDetailScreen> {
   Widget _buildResultView(ThemeData theme) {
     return SingleChildScrollView(
       padding: const EdgeInsets.all(AppSpacing.md),
-      child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+      child: Center(child: ConstrainedBox(
+        constraints: const BoxConstraints(maxWidth: 820),
+        child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
         Row(children: [
           Icon(_feature.icon, color: AppColors.accent, size: 20),
           const SizedBox(width: 8),
@@ -782,6 +784,7 @@ class _AiFeatureDetailScreenState extends ConsumerState<AiFeatureDetailScreen> {
             ),
           ),
       ]),
+      )),
     );
   }
 }

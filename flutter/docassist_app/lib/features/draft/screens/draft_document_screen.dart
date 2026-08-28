@@ -1400,10 +1400,13 @@ class _DraftDocumentScreenState extends ConsumerState<DraftDocumentScreen> {
     // Document text — rendered as a simulated Word/print page.
     Expanded(child: SingleChildScrollView(
       padding: const EdgeInsets.all(16),
-      child: DocumentPreview(
-        title: _resultTitle ?? _selected?.id ?? 'Document',
-        content: _result!,
-      ),
+      child: Center(child: ConstrainedBox(
+        constraints: const BoxConstraints(maxWidth: 820),
+        child: DocumentPreview(
+          title: _resultTitle ?? _selected?.id ?? 'Document',
+          content: _result!,
+        ),
+      )),
     )),
   ]);
 

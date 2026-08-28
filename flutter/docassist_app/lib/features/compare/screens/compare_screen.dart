@@ -413,10 +413,12 @@ class _CompareScreenState extends ConsumerState<CompareScreen> {
     final totalChanges = _result!['total_changes'] as int? ?? diffs.length;
     final reportText = _reportText(diffs, summary, verdict);
 
-    return CustomScrollView(slivers: [
+    return SingleChildScrollView(child: Center(child: ConstrainedBox(
+      constraints: const BoxConstraints(maxWidth: 1100),
+      child: Column(children: [
 
       // ── Premium gradient header: titles, change badge, actions, summary ──
-      SliverToBoxAdapter(child: ClipRRect(
+      ClipRRect(
         borderRadius: BorderRadius.circular(24),
         child: Container(
           margin: const EdgeInsets.all(16),
@@ -483,51 +485,49 @@ class _CompareScreenState extends ConsumerState<CompareScreen> {
             ),
           ]),
         ),
-      )),
+      ),
 
       // ── Side-by-side comparison panels ──────────────────────────────────
       if (diffs.isNotEmpty)
-        SliverToBoxAdapter(
-          child: Padding(
-            padding: const EdgeInsets.fromLTRB(16, 0, 16, 16),
-            child: LayoutBuilder(builder: (context, constraints) {
-              final panelA = _ComparisonPanel(
-                label: 'Document A', docTitle: _doc1!.title, color: _colorA,
-                diffs: diffs, isA: true,
-                onCopy: () async {
-                  final ok = await copyToClipboard(_sideText(diffs, isA: true));
-                  if (mounted) {
-                    ScaffoldMessenger.of(context).showSnackBar(SnackBar(
-                        content: Text(ok ? 'Document A differences copied' : 'Copy failed')));
-                  }
-                },
-              );
-              final panelB = _ComparisonPanel(
-                label: 'Document B', docTitle: _doc2!.title, color: _colorB,
-                diffs: diffs, isA: false,
-                onCopy: () async {
-                  final ok = await copyToClipboard(_sideText(diffs, isA: false));
-                  if (mounted) {
-                    ScaffoldMessenger.of(context).showSnackBar(SnackBar(
-                        content: Text(ok ? 'Document B differences copied' : 'Copy failed')));
-                  }
-                },
-              );
-              final wide = constraints.maxWidth >= 680;
-              return wide
-                  ? Row(crossAxisAlignment: CrossAxisAlignment.start, children: [
-                      Expanded(child: panelA),
-                      const SizedBox(width: 12),
-                      Expanded(child: panelB),
-                    ])
-                  : Column(children: [panelA, const SizedBox(height: 12), panelB]);
-            }),
-          ),
+        Padding(
+          padding: const EdgeInsets.fromLTRB(16, 0, 16, 16),
+          child: LayoutBuilder(builder: (context, constraints) {
+            final panelA = _ComparisonPanel(
+              label: 'Document A', docTitle: _doc1!.title, color: _colorA,
+              diffs: diffs, isA: true,
+              onCopy: () async {
+                final ok = await copyToClipboard(_sideText(diffs, isA: true));
+                if (mounted) {
+                  ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+                      content: Text(ok ? 'Document A differences copied' : 'Copy failed')));
+                }
+              },
+            );
+            final panelB = _ComparisonPanel(
+              label: 'Document B', docTitle: _doc2!.title, color: _colorB,
+              diffs: diffs, isA: false,
+              onCopy: () async {
+                final ok = await copyToClipboard(_sideText(diffs, isA: false));
+                if (mounted) {
+                  ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+                      content: Text(ok ? 'Document B differences copied' : 'Copy failed')));
+                }
+              },
+            );
+            final wide = constraints.maxWidth >= 680;
+            return wide
+                ? Row(crossAxisAlignment: CrossAxisAlignment.start, children: [
+                    Expanded(child: panelA),
+                    const SizedBox(width: 12),
+                    Expanded(child: panelB),
+                  ])
+                : Column(children: [panelA, const SizedBox(height: 12), panelB]);
+          }),
         ),
 
       // Verdict
       if (verdict.isNotEmpty)
-        SliverToBoxAdapter(child: Padding(
+        Padding(
           padding: const EdgeInsets.fromLTRB(16, 0, 16, 16),
           child: Container(
             padding: const EdgeInsets.all(14),
@@ -550,10 +550,11 @@ class _CompareScreenState extends ConsumerState<CompareScreen> {
               ])),
             ]),
           ),
-        )),
+        ),
 
-      const SliverToBoxAdapter(child: SizedBox(height: 32)),
-    ]);
+      const SizedBox(height: 32),
+      ]),
+    )));
   }
 }
 

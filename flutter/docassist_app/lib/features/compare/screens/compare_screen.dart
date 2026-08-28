@@ -7,7 +7,9 @@ import '../../documents/providers/document_provider.dart';
 import '../../../core/services/ai_history_service.dart';
 import '../../../shared/widgets/feature_history_sheet.dart';
 import '../../../shared/widgets/fun_loading_word.dart';
+import '../../../shared/widgets/share_options_sheet.dart';
 import '../../../core/services/document_export_service.dart';
+import '../../../core/services/clipboard_helper.dart';
 
 // ─── Screen ───────────────────────────────────────────────────────────────────
 
@@ -332,9 +334,18 @@ class _CompareScreenState extends ConsumerState<CompareScreen> {
       ..writeln(summary)
       ..writeln();
     if (diffs.isNotEmpty) {
-      buf.writeln('## Differences');
+      buf.writeln('## ${_doc1?.title ?? 'Document A'}');
       for (final d in diffs) {
-        buf.writeln('- ${d['description'] ?? d.toString()}');
+        final text = d['doc_a'] as String? ?? '';
+        if (text.isEmpty || d['change'] == 'added') continue;
+        buf.writeln('- [${d['category'] ?? ''}] $text');
+      }
+      buf.writeln();
+      buf.writeln('## ${_doc2?.title ?? 'Document B'}');
+      for (final d in diffs) {
+        final text = d['doc_b'] as String? ?? '';
+        if (text.isEmpty || d['change'] == 'removed') continue;
+        buf.writeln('- [${d['category'] ?? ''}] $text');
       }
       buf.writeln();
     }
@@ -343,6 +354,19 @@ class _CompareScreenState extends ConsumerState<CompareScreen> {
       buf.writeln(verdict);
     }
     return buf.toString();
+  }
+
+  String _sideText(List<Map<String, dynamic>> diffs, {required bool isA}) {
+    final buf = StringBuffer();
+    for (final d in diffs) {
+      final text = (isA ? d['doc_a'] : d['doc_b']) as String? ?? '';
+      if (text.isEmpty) continue;
+      if (isA && d['change'] == 'added') continue;
+      if (!isA && d['change'] == 'removed') continue;
+      buf.writeln('[${d['category'] ?? ''}] $text');
+      buf.writeln();
+    }
+    return buf.toString().trim();
   }
 
   Future<void> _handleExport(
@@ -378,101 +402,139 @@ class _CompareScreenState extends ConsumerState<CompareScreen> {
         doneMessage: 'DOCX ready to save or share',
       );
 
+  static const _colorA = AppColors.secondary;
+  static const _colorB = AppColors.info;
+
   Widget _buildResult() {
     final diffs = (_result!['differences'] as List? ?? [])
         .cast<Map<String, dynamic>>();
     final summary = _result!['summary'] as String? ?? '';
     final verdict = _result!['verdict'] as String? ?? '';
     final totalChanges = _result!['total_changes'] as int? ?? diffs.length;
+    final reportText = _reportText(diffs, summary, verdict);
 
     return CustomScrollView(slivers: [
 
-      // Summary card
-      SliverToBoxAdapter(child: Container(
-        color: AppColors.surface,
-        padding: const EdgeInsets.all(16),
-        child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-
-          // Doc titles row
-          Row(children: [
-            Expanded(child: _DocPill(_doc1!.title, AppColors.secondary)),
-            const Padding(
-              padding: EdgeInsets.symmetric(horizontal: 8),
-              child: Icon(Icons.compare_arrows_rounded, color: AppColors.textTertiary, size: 20),
+      // ── Premium gradient header: titles, change badge, actions, summary ──
+      SliverToBoxAdapter(child: ClipRRect(
+        borderRadius: BorderRadius.circular(24),
+        child: Container(
+          margin: const EdgeInsets.all(16),
+          decoration: const BoxDecoration(
+            gradient: LinearGradient(
+              begin: Alignment.topLeft, end: Alignment.bottomRight,
+              colors: [_colorA, _colorB],
             ),
-            Expanded(child: _DocPill(_doc2!.title, AppColors.info)),
+            boxShadow: [
+              BoxShadow(color: Color(0x33334155), blurRadius: 20, offset: Offset(0, 10)),
+            ],
+          ),
+          child: Stack(children: [
+            Positioned(top: -30, right: -20,
+                child: _Orb(size: 110, color: Colors.white.withValues(alpha: 0.10))),
+            Positioned(bottom: -30, left: -10,
+                child: _Orb(size: 90, color: Colors.white.withValues(alpha: 0.08))),
+            Padding(
+              padding: const EdgeInsets.all(18),
+              child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+                Row(children: [
+                  Expanded(child: _DocPill(_doc1!.title, Colors.white)),
+                  const Padding(
+                    padding: EdgeInsets.symmetric(horizontal: 8),
+                    child: Icon(Icons.compare_arrows_rounded, color: Colors.white, size: 20),
+                  ),
+                  Expanded(child: _DocPill(_doc2!.title, Colors.white)),
+                ]),
+                const SizedBox(height: 14),
+                Row(children: [
+                  Container(
+                    padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 5),
+                    decoration: BoxDecoration(
+                      color: Colors.white.withValues(alpha: 0.18),
+                      borderRadius: BorderRadius.circular(20),
+                    ),
+                    child: Text('$totalChanges difference${totalChanges == 1 ? '' : 's'} found',
+                        style: const TextStyle(fontSize: 12, fontWeight: FontWeight.w700,
+                            color: Colors.white)),
+                  ),
+                  const Spacer(),
+                  IconButton(
+                    icon: const Icon(Icons.share_outlined, color: Colors.white, size: 18),
+                    tooltip: 'Share',
+                    onPressed: () => showShareOptionsSheet(context,
+                        title: 'Document Comparison', content: reportText),
+                  ),
+                  IconButton(
+                    icon: const Icon(Icons.picture_as_pdf_outlined, color: Colors.white, size: 18),
+                    tooltip: 'Download as PDF',
+                    onPressed: () => _exportPdf(reportText),
+                  ),
+                  IconButton(
+                    icon: const Icon(Icons.description_outlined, color: Colors.white, size: 18),
+                    tooltip: 'Download as Word (DOCX)',
+                    onPressed: () => _exportDocx(reportText),
+                  ),
+                ]),
+                if (summary.isNotEmpty) ...[
+                  const SizedBox(height: 4),
+                  Text(summary, style: const TextStyle(fontSize: 13, height: 1.6, color: Colors.white)),
+                ],
+              ]),
+            ),
           ]),
-
-          const SizedBox(height: 14),
-
-          // Change count badge
-          Row(children: [
-            Container(
-              padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 5),
-              decoration: BoxDecoration(
-                color: totalChanges == 0
-                    ? AppColors.successContainer
-                    : const Color(0xFFFFF7ED),
-                borderRadius: BorderRadius.circular(20),
-              ),
-              child: Text('$totalChanges difference${totalChanges == 1 ? '' : 's'} found',
-                  style: TextStyle(
-                    fontSize: 12,
-                    fontWeight: FontWeight.w600,
-                    color: totalChanges == 0
-                        ? AppColors.success
-                        : AppColors.warning,
-                  )),
-            ),
-            const Spacer(),
-            IconButton(
-              icon: const Icon(Icons.picture_as_pdf_outlined, size: 18),
-              tooltip: 'Export as PDF',
-              onPressed: () => _exportPdf(_reportText(diffs, summary, verdict)),
-            ),
-            IconButton(
-              icon: const Icon(Icons.description_outlined, size: 18),
-              tooltip: 'Export as Word (DOCX)',
-              onPressed: () => _exportDocx(_reportText(diffs, summary, verdict)),
-            ),
-          ]),
-
-          const SizedBox(height: 10),
-          Text(summary, style: const TextStyle(fontSize: 13, height: 1.6,
-              color: Color(0xFF374151))),
-        ]),
+        ),
       )),
 
-      // Differences list
-      if (diffs.isNotEmpty) ...[
-        const SliverToBoxAdapter(child: Padding(
-          padding: EdgeInsets.fromLTRB(16, 16, 16, 8),
-          child: Text('Differences',
-              style: TextStyle(fontSize: 15, fontWeight: FontWeight.bold,
-                  color: AppColors.textPrimary)),
-        )),
-        SliverPadding(
-          padding: const EdgeInsets.symmetric(horizontal: 16),
-          sliver: SliverList(
-            delegate: SliverChildBuilderDelegate(
-              (_, i) => _DiffCard(diff: diffs[i],
-                  docATitle: _doc1!.title, docBTitle: _doc2!.title),
-              childCount: diffs.length,
-            ),
+      // ── Side-by-side comparison panels ──────────────────────────────────
+      if (diffs.isNotEmpty)
+        SliverToBoxAdapter(
+          child: Padding(
+            padding: const EdgeInsets.fromLTRB(16, 0, 16, 16),
+            child: LayoutBuilder(builder: (context, constraints) {
+              final panelA = _ComparisonPanel(
+                label: 'Document A', docTitle: _doc1!.title, color: _colorA,
+                diffs: diffs, isA: true,
+                onCopy: () async {
+                  final ok = await copyToClipboard(_sideText(diffs, isA: true));
+                  if (mounted) {
+                    ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+                        content: Text(ok ? 'Document A differences copied' : 'Copy failed')));
+                  }
+                },
+              );
+              final panelB = _ComparisonPanel(
+                label: 'Document B', docTitle: _doc2!.title, color: _colorB,
+                diffs: diffs, isA: false,
+                onCopy: () async {
+                  final ok = await copyToClipboard(_sideText(diffs, isA: false));
+                  if (mounted) {
+                    ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+                        content: Text(ok ? 'Document B differences copied' : 'Copy failed')));
+                  }
+                },
+              );
+              final wide = constraints.maxWidth >= 680;
+              return wide
+                  ? IntrinsicHeight(child: Row(crossAxisAlignment: CrossAxisAlignment.start, children: [
+                      Expanded(child: panelA),
+                      const SizedBox(width: 12),
+                      Expanded(child: panelB),
+                    ]))
+                  : Column(children: [panelA, const SizedBox(height: 12), panelB]);
+            }),
           ),
         ),
-      ],
 
       // Verdict
       if (verdict.isNotEmpty)
         SliverToBoxAdapter(child: Padding(
-          padding: const EdgeInsets.all(16),
+          padding: const EdgeInsets.fromLTRB(16, 0, 16, 16),
           child: Container(
             padding: const EdgeInsets.all(14),
             decoration: BoxDecoration(
               color: AppColors.successContainer,
-              borderRadius: BorderRadius.circular(12),
-              border: Border.all(color: AppColors.successContainer),
+              borderRadius: BorderRadius.circular(16),
+              boxShadow: const [BoxShadow(color: Color(0x0F000000), blurRadius: 12, offset: Offset(0, 4))],
             ),
             child: Row(crossAxisAlignment: CrossAxisAlignment.start, children: [
               const Icon(Icons.lightbulb_outline_rounded,
@@ -492,6 +554,124 @@ class _CompareScreenState extends ConsumerState<CompareScreen> {
 
       const SliverToBoxAdapter(child: SizedBox(height: 32)),
     ]);
+  }
+}
+
+class _Orb extends StatelessWidget {
+  final double size;
+  final Color color;
+  const _Orb({required this.size, required this.color});
+  @override
+  Widget build(BuildContext context) => Container(
+    width: size, height: size,
+    decoration: BoxDecoration(shape: BoxShape.circle, color: color),
+  );
+}
+
+// ─── Side-by-side comparison panel ("ChatGPT-style" A/B card) ─────────────────
+
+class _ComparisonPanel extends StatelessWidget {
+  final String label;
+  final String docTitle;
+  final Color color;
+  final List<Map<String, dynamic>> diffs;
+  final bool isA;
+  final VoidCallback onCopy;
+  const _ComparisonPanel({
+    required this.label, required this.docTitle, required this.color,
+    required this.diffs, required this.isA, required this.onCopy,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final entries = diffs.where((d) {
+      final text = (isA ? d['doc_a'] : d['doc_b']) as String? ?? '';
+      if (text.isEmpty) return false;
+      if (isA && d['change'] == 'added') return false;
+      if (!isA && d['change'] == 'removed') return false;
+      return true;
+    }).toList();
+
+    return Container(
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(20),
+        border: Border.all(color: color.withValues(alpha: 0.25)),
+        boxShadow: const [BoxShadow(color: Color(0x0F000000), blurRadius: 14, offset: Offset(0, 6))],
+      ),
+      child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+        Container(
+          padding: const EdgeInsets.fromLTRB(14, 12, 8, 12),
+          decoration: BoxDecoration(
+            color: color.withValues(alpha: 0.08),
+            borderRadius: const BorderRadius.vertical(top: Radius.circular(20)),
+          ),
+          child: Row(children: [
+            Container(width: 8, height: 8,
+                decoration: BoxDecoration(color: color, shape: BoxShape.circle)),
+            const SizedBox(width: 6),
+            Expanded(child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+              Text(label, style: TextStyle(fontSize: 11, fontWeight: FontWeight.w800,
+                  color: color, letterSpacing: 0.5)),
+              Text(docTitle, maxLines: 1, overflow: TextOverflow.ellipsis,
+                  style: const TextStyle(fontSize: 12, fontWeight: FontWeight.w600,
+                      color: AppColors.textPrimary)),
+            ])),
+            IconButton(
+              icon: Icon(Icons.copy_rounded, size: 16, color: color),
+              tooltip: 'Copy all',
+              onPressed: entries.isEmpty ? null : onCopy,
+              padding: EdgeInsets.zero,
+              constraints: const BoxConstraints(minWidth: 30, minHeight: 30),
+            ),
+          ]),
+        ),
+        if (entries.isEmpty)
+          Padding(
+            padding: const EdgeInsets.all(20),
+            child: Text('No unique content on this side.',
+                style: TextStyle(fontSize: 12, color: AppColors.textTertiary)),
+          )
+        else
+          ConstrainedBox(
+            constraints: const BoxConstraints(maxHeight: 420),
+            child: ListView.separated(
+              shrinkWrap: true,
+              padding: const EdgeInsets.all(12),
+              itemCount: entries.length,
+              separatorBuilder: (_, __) => const SizedBox(height: 8),
+              itemBuilder: (_, i) {
+                final d = entries[i];
+                final text = (isA ? d['doc_a'] : d['doc_b']) as String? ?? '';
+                final category = d['category'] as String? ?? '';
+                final change = d['change'] as String? ?? '';
+                final changeColor = switch (change) {
+                  'added' => AppColors.success,
+                  'removed' => AppColors.error,
+                  'modified' => AppColors.warning,
+                  _ => AppColors.textSecondary,
+                };
+                return Container(
+                  padding: const EdgeInsets.all(10),
+                  decoration: BoxDecoration(
+                    color: const Color(0xFFFAFAFB),
+                    borderRadius: BorderRadius.circular(10),
+                    border: Border(left: BorderSide(color: changeColor, width: 3)),
+                  ),
+                  child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+                    if (category.isNotEmpty)
+                      Text(category, style: TextStyle(fontSize: 10.5, fontWeight: FontWeight.w700,
+                          color: changeColor, letterSpacing: 0.3)),
+                    const SizedBox(height: 3),
+                    Text(text, style: const TextStyle(fontSize: 12.5, height: 1.5,
+                        color: AppColors.textPrimary)),
+                  ]),
+                );
+              },
+            ),
+          ),
+      ]),
+    );
   }
 }
 
@@ -767,118 +947,6 @@ class _DocPickerSheetState extends State<_DocPickerSheet> {
       ),
     );
   }
-}
-
-// ─── Diff card ───────────────────────────────────────────────────────────────
-
-class _DiffCard extends StatelessWidget {
-  final Map<String, dynamic> diff;
-  final String docATitle;
-  final String docBTitle;
-  const _DiffCard({required this.diff, required this.docATitle, required this.docBTitle});
-
-  Color get _changeColor {
-    switch (diff['change'] as String? ?? '') {
-      case 'added':    return AppColors.success;
-      case 'removed':  return AppColors.error;
-      case 'modified': return AppColors.warning;
-      default:         return AppColors.textSecondary;
-    }
-  }
-
-  IconData get _changeIcon {
-    switch (diff['change'] as String? ?? '') {
-      case 'added':    return Icons.add_circle_outline;
-      case 'removed':  return Icons.remove_circle_outline;
-      case 'modified': return Icons.change_circle_outlined;
-      default:         return Icons.circle_outlined;
-    }
-  }
-
-  String get _changeLabel {
-    switch (diff['change'] as String? ?? '') {
-      case 'added':    return 'ADDED IN B';
-      case 'removed':  return 'REMOVED IN B';
-      case 'modified': return 'MODIFIED';
-      default:         return 'CHANGED';
-    }
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    final docA = diff['doc_a'] as String? ?? '';
-    final docB = diff['doc_b'] as String? ?? '';
-    final category = diff['category'] as String? ?? '';
-    final change = diff['change'] as String? ?? '';
-
-    return Container(
-      margin: const EdgeInsets.only(bottom: 10),
-      decoration: BoxDecoration(
-        color: AppColors.surface,
-        borderRadius: BorderRadius.circular(12),
-        border: Border(left: BorderSide(color: _changeColor, width: 3)),
-        boxShadow: AppShadows.sm,
-      ),
-      child: Padding(
-        padding: const EdgeInsets.all(12),
-        child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-          Row(children: [
-            Icon(_changeIcon, color: _changeColor, size: 15),
-            const SizedBox(width: 6),
-            Text(category,
-                style: const TextStyle(fontSize: 13, fontWeight: FontWeight.bold,
-                    color: AppColors.textPrimary)),
-            const Spacer(),
-            Container(
-              padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
-              decoration: BoxDecoration(
-                color: _changeColor.withValues(alpha: 0.1),
-                borderRadius: BorderRadius.circular(6),
-              ),
-              child: Text(_changeLabel,
-                  style: TextStyle(fontSize: 10, fontWeight: FontWeight.bold,
-                      color: _changeColor)),
-            ),
-          ]),
-          if (docA.isNotEmpty && change != 'added') ...[
-            const SizedBox(height: 8),
-            _Side('A', docA, AppColors.secondary),
-          ],
-          if (docB.isNotEmpty && change != 'removed') ...[
-            const SizedBox(height: 6),
-            _Side('B', docB, AppColors.info),
-          ],
-        ]),
-      ),
-    );
-  }
-}
-
-class _Side extends StatelessWidget {
-  final String label;
-  final String text;
-  final Color color;
-  const _Side(this.label, this.text, this.color);
-
-  @override
-  Widget build(BuildContext context) => Row(
-    crossAxisAlignment: CrossAxisAlignment.start,
-    children: [
-      Container(
-        width: 18, height: 18,
-        alignment: Alignment.center,
-        decoration: BoxDecoration(
-          color: color.withValues(alpha: 0.12),
-          borderRadius: BorderRadius.circular(4),
-        ),
-        child: Text(label,
-            style: TextStyle(fontSize: 10, fontWeight: FontWeight.bold, color: color)),
-      ),
-      const SizedBox(width: 8),
-      Expanded(child: Text(text,
-          style: const TextStyle(fontSize: 12, height: 1.5, color: AppColors.textSecondary))),
-    ],
-  );
 }
 
 // ─── Doc label pill ───────────────────────────────────────────────────────────

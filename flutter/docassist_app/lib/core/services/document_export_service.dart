@@ -48,6 +48,9 @@ class DocumentExportService {
         PdfGoogleFonts.notoSansMalayalamRegular(),
         PdfGoogleFonts.notoSansGurmukhiRegular(), // Punjabi
         PdfGoogleFonts.notoNaskhArabicRegular(), // Urdu
+        PdfGoogleFonts.notoSansSymbolsRegular(), // arrows (→), misc symbols
+        PdfGoogleFonts.notoSansSymbols2Regular(), // additional symbol coverage
+        PdfGoogleFonts.notoSansMathRegular(), // math/comparison symbols (≤, ≥, ≈, ±, ×, ÷…)
       ]);
       final base = results[0];
       final bold = results[1];
@@ -65,6 +68,36 @@ class DocumentExportService {
     return cleaned.replaceAll(RegExp(r'[^\w\-]+'), '_');
   }
 
+  /// Replaces Unicode punctuation/symbols the AI commonly outputs (smart
+  /// quotes, en/em dashes, comparison symbols, bullets, ellipsis, …) with
+  /// plain ASCII equivalents before rendering to PDF.
+  ///
+  /// The font-fallback chain above covers a lot, but chasing down every
+  /// individual glyph an LLM might use is a losing game — a new symbol
+  /// choice can always slip past whatever fonts happen to be loaded and
+  /// show up as a "tofu" box. Normalizing to ASCII here is the actually
+  /// bulletproof fix: ASCII renders correctly in literally any font, so
+  /// this class of bug can't recur regardless of what the AI writes next.
+  static String _sanitizeForPdf(String text) {
+    const replacements = {
+      '‘': "'", '’': "'", // ' '
+      '“': '"', '”': '"', // " "
+      '–': '-', '—': '--', // – —
+      '−': '-', // −
+      '…': '...', // …
+      '•': '-', '‣': '-', '●': '-', '◦': '-', // • ‣ ● ◦
+      '→': '->', '←': '<-', '↔': '<->', // → ← ↔
+      '≤': '<=', '≥': '>=', // ≤ ≥
+      '≈': '~', '≠': '!=', // ≈ ≠
+      '×': 'x', '÷': '/', // × ÷
+      '±': '+/-', // ±
+      ' ': ' ', // non-breaking space
+    };
+    var out = text;
+    replacements.forEach((from, to) => out = out.replaceAll(from, to));
+    return out;
+  }
+
   /// Splits [content] into paragraph widgets instead of one giant [pw.Text].
   /// A single very-long [pw.Text] block can occasionally be taller than one
   /// PDF page's worth of content, and the pdf package can't split such a
@@ -72,9 +105,10 @@ class DocumentExportService {
   /// Breaking the document into one [pw.Text] per paragraph — and further
   /// chunking any unusually long paragraph — guarantees no single widget is
   /// ever too tall to lay out, no matter how long the overall document is.
-  static List<pw.Widget> _paragraphWidgets(String content) {
+  static List<pw.Widget> _paragraphWidgets(String rawContent) {
     const style = pw.TextStyle(fontSize: 11, lineSpacing: 3);
     const maxParagraphChars = 1200;
+    final content = _sanitizeForPdf(rawContent);
 
     final rawParagraphs = content.split(RegExp(r'\n\s*\n'));
     final widgets = <pw.Widget>[];
@@ -130,7 +164,7 @@ class DocumentExportService {
         // Raise the cap so any realistic document-length export works.
         maxPages: 1000,
         header: (context) => pw.Text(
-          title,
+          _sanitizeForPdf(title),
           style: pw.TextStyle(fontSize: 14, fontWeight: pw.FontWeight.bold),
         ),
         build: (context) => [
@@ -168,7 +202,7 @@ class DocumentExportService {
         margin: const pw.EdgeInsets.all(36),
         maxPages: 1000,
         header: (context) => pw.Text(
-          title,
+          _sanitizeForPdf(title),
           style: pw.TextStyle(fontSize: 14, fontWeight: pw.FontWeight.bold),
         ),
         build: (context) => [

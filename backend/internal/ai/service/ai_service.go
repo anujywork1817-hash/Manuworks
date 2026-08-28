@@ -674,7 +674,11 @@ func (s *aiService) AnalyzeDocument(ctx context.Context, userID, docID uuid.UUID
 }
 
 func (s *aiService) Translate(ctx context.Context, userID, docID uuid.UUID, targetLanguage string) (*groq.TranslationResponse, error) {
-	text, err := s.getDocumentText(ctx, userID, docID, 30000)
+	// Capped so the request (input + output tokens) stays under Groq's
+	// 8,000 tokens/minute limit even when Claude is rate-limited and this
+	// falls back to Groq — a larger cap here works fine on Claude but
+	// throws "Request too large" the moment it lands on the Groq fallback.
+	text, err := s.getDocumentText(ctx, userID, docID, 16000)
 	if err != nil {
 		return nil, err
 	}

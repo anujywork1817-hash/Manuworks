@@ -686,7 +686,7 @@ func (c *Client) TranslateDocument(ctx context.Context, text, targetLanguage str
 	system := "You are a professional translator. Respond with ONLY the translated text. No JSON, no preamble, no explanations, no quotation marks around the output."
 	prompt := "Translate the following document into " + targetLanguage + ".\n\nDocument:\n" + text
 
-	raw, err := c.generate(ctx, system, prompt, 7000)
+	raw, err := c.generate(ctx, system, prompt, 3500)
 	if err != nil {
 		return nil, fmt.Errorf("translate: %w", err)
 	}

@@ -257,7 +257,13 @@ func Load() *Config {
 		OCR: OCRConfig{
 			TesseractPath: getStr("TESSERACT_PATH", "/usr/bin/tesseract"),
 			Lang:          getStr("TESSERACT_LANG", "eng"),
-			Timeout:       getDuration("TESSERACT_TIMEOUT", 60*time.Second),
+			// Bounds the whole render+OCR pass for one document. The old 60s
+			// default was fine for a handful of pages but killed anything
+			// large (a 100-page scanned PDF easily needs several minutes
+			// even with parallel OCR workers) — ProcessDocument already runs
+			// as a detached background job, so there's no HTTP timeout this
+			// needs to fit inside; 30 minutes gives real headroom.
+			Timeout: getDuration("TESSERACT_TIMEOUT", 30*time.Minute),
 		},
 
 		SMTP: SMTPConfig{

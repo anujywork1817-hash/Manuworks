@@ -355,7 +355,7 @@ func main() {
 		Addr:              fmt.Sprintf(":%s", cfg.App.Port),
 		Handler:           router,
 		ReadHeaderTimeout: 10 * time.Second,  // protect against slow-header attacks only
-		WriteTimeout:      300 * time.Second, // 5 min for AI responses
+		WriteTimeout:      600 * time.Second, // 10 min — headroom for large-document synchronous AI calls
 		IdleTimeout:       120 * time.Second,
 	}
 

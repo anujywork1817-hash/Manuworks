@@ -553,10 +553,12 @@ func (s *Service) extractText(ctx context.Context, filePath, lang string, maxPag
 }
 
 // digitalPDFTextTimeout bounds each pdftotext pass. Plain text extraction
-// should always be near-instant — a hang here (malformed/huge/adversarial
-// PDF) previously blocked document processing forever with no timeout and
-// no error, leaving the document stuck in "processing" indefinitely.
-const digitalPDFTextTimeout = 30 * time.Second
+// is normally near-instant, but a genuinely large document (100+ pages)
+// can legitimately take longer than a few seconds — this still guards
+// against a hang on a malformed/adversarial PDF (which was the original
+// bug: no timeout at all, leaving documents stuck in "processing"
+// forever) without cutting off large-but-healthy documents.
+const digitalPDFTextTimeout = 120 * time.Second
 
 // extractDigitalPDFText tries to extract selectable text from a PDF (not scanned).
 // Uses pdftotext from poppler-utils.

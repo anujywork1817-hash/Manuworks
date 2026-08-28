@@ -340,11 +340,15 @@ func (s *aiService) ProcessDocument(ctx context.Context, userID, docID uuid.UUID
 		aiWG         sync.WaitGroup
 	)
 	aiWG.Add(5)
+	// Raised from the original 12-15k char caps so a large document (100+
+	// pages) is actually analyzed in full rather than just its first few
+	// pages — Claude's context window comfortably handles this; Groq only
+	// ever sees it as a rate-limited fallback for a single request.
 	go func() { defer aiWG.Done(); summaryRes, _ = s.groqClient.Summarize(ctx, truncate(extractedText, 60000)) }()
-	go func() { defer aiWG.Done(); keyPointsRes, _ = s.groqClient.ExtractKeyPoints(ctx, truncate(extractedText, 12000)) }()
-	go func() { defer aiWG.Done(); timelineRes, _ = s.groqClient.ExtractTimeline(ctx, truncate(extractedText, 15000)) }()
-	go func() { defer aiWG.Done(); actionRes, _ = s.groqClient.ExtractActionItems(ctx, truncate(extractedText, 12000)) }()
-	go func() { defer aiWG.Done(); analysisRes, _ = s.groqClient.AnalyzeDocument(ctx, truncate(extractedText, 12000)) }()
+	go func() { defer aiWG.Done(); keyPointsRes, _ = s.groqClient.ExtractKeyPoints(ctx, truncate(extractedText, 60000)) }()
+	go func() { defer aiWG.Done(); timelineRes, _ = s.groqClient.ExtractTimeline(ctx, truncate(extractedText, 60000)) }()
+	go func() { defer aiWG.Done(); actionRes, _ = s.groqClient.ExtractActionItems(ctx, truncate(extractedText, 60000)) }()
+	go func() { defer aiWG.Done(); analysisRes, _ = s.groqClient.AnalyzeDocument(ctx, truncate(extractedText, 60000)) }()
 	aiWG.Wait()
 
 	var (
@@ -610,7 +614,7 @@ func (s *aiService) ExtractKeyPoints(ctx context.Context, userID, docID uuid.UUI
 	if doc.AiKeyPoints != "" {
 		return strings.Split(doc.AiKeyPoints, "\n"), nil
 	}
-	result, err := s.groqClient.ExtractKeyPoints(ctx, truncate(doc.OcrText, 12000))
+	result, err := s.groqClient.ExtractKeyPoints(ctx, truncate(doc.OcrText, 60000))
 	if err != nil {
 		return nil, err
 	}
@@ -637,7 +641,7 @@ func (s *aiService) ExtractTimeline(ctx context.Context, userID, docID uuid.UUID
 		}
 		return &groq.TimelineResponse{Events: events}, nil
 	}
-	return s.groqClient.ExtractTimeline(ctx, truncate(doc.OcrText, 15000))
+	return s.groqClient.ExtractTimeline(ctx, truncate(doc.OcrText, 60000))
 }
 
 func (s *aiService) ExtractActionItems(ctx context.Context, userID, docID uuid.UUID) ([]string, error) {
@@ -648,7 +652,7 @@ func (s *aiService) ExtractActionItems(ctx context.Context, userID, docID uuid.U
 	if doc.AiActionItems != "" {
 		return strings.Split(doc.AiActionItems, "\n"), nil
 	}
-	result, err := s.groqClient.ExtractActionItems(ctx, truncate(doc.OcrText, 12000))
+	result, err := s.groqClient.ExtractActionItems(ctx, truncate(doc.OcrText, 60000))
 	if err != nil {
 		return nil, err
 	}
@@ -670,7 +674,7 @@ func (s *aiService) AnalyzeDocument(ctx context.Context, userID, docID uuid.UUID
 			Insights:     strings.Split(doc.AiAnalysis, "\n"),
 		}, nil
 	}
-	return s.groqClient.AnalyzeDocument(ctx, truncate(doc.OcrText, 12000))
+	return s.groqClient.AnalyzeDocument(ctx, truncate(doc.OcrText, 60000))
 }
 
 func (s *aiService) Translate(ctx context.Context, userID, docID uuid.UUID, targetLanguage string) (*groq.TranslationResponse, error) {

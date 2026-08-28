@@ -515,11 +515,11 @@ class _CompareScreenState extends ConsumerState<CompareScreen> {
               );
               final wide = constraints.maxWidth >= 680;
               return wide
-                  ? IntrinsicHeight(child: Row(crossAxisAlignment: CrossAxisAlignment.start, children: [
+                  ? Row(crossAxisAlignment: CrossAxisAlignment.start, children: [
                       Expanded(child: panelA),
                       const SizedBox(width: 12),
                       Expanded(child: panelB),
-                    ]))
+                    ])
                   : Column(children: [panelA, const SizedBox(height: 12), panelB]);
             }),
           ),

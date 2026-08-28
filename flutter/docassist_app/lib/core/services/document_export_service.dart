@@ -114,34 +114,43 @@ class DocumentExportService {
     final widgets = <pw.Widget>[];
 
     for (final para in rawParagraphs) {
-      final trimmed = para.trimRight();
-      if (trimmed.isEmpty) continue;
+      // Join a paragraph's internal line-wraps into one flowing line —
+      // otherwise each wrapped fragment renders as its own hard line
+      // break, which looks broken once justify is stretching every one
+      // of those short lines to fill the page width individually instead
+      // of flowing as a single paragraph.
+      final joined = para
+          .split('\n')
+          .map((l) => l.trim())
+          .where((l) => l.isNotEmpty)
+          .join(' ');
+      if (joined.isEmpty) continue;
 
-      if (trimmed.length <= maxParagraphChars) {
-        widgets.add(pw.Text(trimmed, style: style));
+      if (joined.length <= maxParagraphChars) {
+        widgets.add(pw.Text(joined, style: style, textAlign: pw.TextAlign.justify));
       } else {
-        // Extra-long paragraph (e.g. a huge block with no blank-line
-        // breaks) — chunk it further, breaking on line boundaries where
-        // possible so we never build a single unsplittable block.
-        final lines = trimmed.split('\n');
+        // Extra-long paragraph — chunk it further, breaking on word
+        // boundaries so we never build a single unsplittable block.
+        final words = joined.split(' ');
         final buffer = StringBuffer();
-        for (final line in lines) {
-          if (buffer.length + line.length > maxParagraphChars &&
+        for (final word in words) {
+          if (buffer.length + word.length + 1 > maxParagraphChars &&
               buffer.isNotEmpty) {
-            widgets.add(pw.Text(buffer.toString(), style: style));
+            widgets.add(pw.Text(buffer.toString(), style: style, textAlign: pw.TextAlign.justify));
             buffer.clear();
           }
-          buffer.writeln(line);
+          if (buffer.isNotEmpty) buffer.write(' ');
+          buffer.write(word);
         }
         if (buffer.isNotEmpty) {
-          widgets.add(pw.Text(buffer.toString(), style: style));
+          widgets.add(pw.Text(buffer.toString(), style: style, textAlign: pw.TextAlign.justify));
         }
       }
       widgets.add(pw.SizedBox(height: 10));
     }
 
     if (widgets.isEmpty) {
-      widgets.add(pw.Text(content, style: style));
+      widgets.add(pw.Text(content, style: style, textAlign: pw.TextAlign.justify));
     }
     return widgets;
   }

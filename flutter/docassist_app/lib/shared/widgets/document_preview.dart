@@ -21,6 +21,12 @@ class DocumentPreview extends StatelessWidget {
     final lines = content.split('\n');
     final blocks = <Widget>[];
     List<String>? bulletGroup;
+    // Consecutive plain lines are wrapped-text fragments of the SAME
+    // paragraph, not separate paragraphs — only a blank line (or a
+    // heading/bullet/numbered line) actually starts a new one. Buffering
+    // and joining them is what makes justify look like a real paragraph
+    // instead of a series of short, oddly-stretched single lines.
+    final paragraphBuffer = <String>[];
 
     void flushBullets() {
       if (bulletGroup == null || bulletGroup!.isEmpty) return;
@@ -32,7 +38,7 @@ class DocumentPreview extends StatelessWidget {
             padding: const EdgeInsets.only(bottom: 4),
             child: Row(crossAxisAlignment: CrossAxisAlignment.start, children: [
               const Text('•  ', style: TextStyle(fontFamily: 'serif', fontSize: 13)),
-              Expanded(child: _RichLine(b, baseSize: 13)),
+              Expanded(child: _RichLine(b, baseSize: 13, justify: true)),
             ]),
           )).toList(),
         ),
@@ -40,10 +46,20 @@ class DocumentPreview extends StatelessWidget {
       bulletGroup = null;
     }
 
+    void flushParagraph() {
+      if (paragraphBuffer.isEmpty) return;
+      blocks.add(Padding(
+        padding: const EdgeInsets.only(bottom: 10),
+        child: _RichLine(paragraphBuffer.join(' '), baseSize: 13.5, justify: true),
+      ));
+      paragraphBuffer.clear();
+    }
+
     for (final raw in lines) {
       final line = raw.trimRight();
       if (line.trim().isEmpty) {
         flushBullets();
+        flushParagraph();
         blocks.add(const SizedBox(height: 8));
         continue;
       }
@@ -51,6 +67,7 @@ class DocumentPreview extends StatelessWidget {
 
       if (trimmed.startsWith('# ')) {
         flushBullets();
+        flushParagraph();
         blocks.add(Padding(
           padding: const EdgeInsets.only(top: 6, bottom: 10),
           child: Text(trimmed.substring(2),
@@ -59,6 +76,7 @@ class DocumentPreview extends StatelessWidget {
         ));
       } else if (trimmed.startsWith('## ')) {
         flushBullets();
+        flushParagraph();
         blocks.add(Padding(
           padding: const EdgeInsets.only(top: 6, bottom: 8),
           child: Text(trimmed.substring(3),
@@ -66,22 +84,22 @@ class DocumentPreview extends StatelessWidget {
                   fontWeight: FontWeight.bold, color: Color(0xFF1F2937))),
         ));
       } else if (trimmed.startsWith('- ') || trimmed.startsWith('* ')) {
+        flushParagraph();
         (bulletGroup ??= []).add(trimmed.substring(2));
       } else if (RegExp(r'^\d+\.\s').hasMatch(trimmed)) {
         flushBullets();
+        flushParagraph();
         blocks.add(Padding(
           padding: const EdgeInsets.only(bottom: 6),
-          child: _RichLine(trimmed, baseSize: 13.5),
+          child: _RichLine(trimmed, baseSize: 13.5, justify: true),
         ));
       } else {
         flushBullets();
-        blocks.add(Padding(
-          padding: const EdgeInsets.only(bottom: 10),
-          child: _RichLine(trimmed, baseSize: 13.5, justify: true),
-        ));
+        paragraphBuffer.add(trimmed);
       }
     }
     flushBullets();
+    flushParagraph();
 
     // SelectionArea makes every Text/Text.rich inside selectable with the
     // mouse/touch and copyable via Ctrl+C or the system context menu —

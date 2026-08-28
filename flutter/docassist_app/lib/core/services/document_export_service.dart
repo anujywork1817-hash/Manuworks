@@ -26,6 +26,11 @@ class PptxSlide {
 class DocumentExportService {
   DocumentExportService._();
 
+  /// Shown at the end of every AI-generated export (PDF, Word, Share) so
+  /// nobody mistakes AI output for a verified/original document.
+  static const String aiDisclaimer =
+      'This document is AI-generated. Please refer to the original document before taking any further action.';
+
   /// Unicode PDF theme covering every script the app's OCR/translate features
   /// advertise support for (English, Hindi, Marathi, Gujarati, Tamil, Telugu,
   /// Kannada, Malayalam, Punjabi, Bengali, Urdu). Without this, the `pdf`
@@ -155,6 +160,18 @@ class DocumentExportService {
     return widgets;
   }
 
+  /// Disclaimer footer appended to every PDF export.
+  static pw.Widget _disclaimerWidget() => pw.Padding(
+        padding: const pw.EdgeInsets.only(top: 20),
+        child: pw.Column(crossAxisAlignment: pw.CrossAxisAlignment.start, children: [
+          pw.Divider(color: PdfColors.grey400),
+          pw.SizedBox(height: 4),
+          pw.Text(aiDisclaimer,
+              style: pw.TextStyle(
+                  fontSize: 9, fontStyle: pw.FontStyle.italic, color: PdfColors.grey700)),
+        ]),
+      );
+
   /// Generates a PDF from [content] and saves/shares/downloads it depending
   /// on platform (mobile/desktop: app storage + share sheet; web: browser
   /// download — neither path_provider nor dart:io File work on web).
@@ -179,6 +196,7 @@ class DocumentExportService {
         build: (context) => [
           pw.SizedBox(height: 12),
           ..._paragraphWidgets(content),
+          _disclaimerWidget(),
         ],
       ),
     );
@@ -217,6 +235,7 @@ class DocumentExportService {
         build: (context) => [
           pw.SizedBox(height: 12),
           ..._paragraphWidgets(content),
+          _disclaimerWidget(),
         ],
       ),
     );
@@ -345,7 +364,7 @@ class DocumentExportService {
   }) async {
     const maxChars = 1500; // WhatsApp truncates very long pre-filled text
     final body = content.length > maxChars ? '${content.substring(0, maxChars)}…' : content;
-    final uri = Uri.parse('https://wa.me/?text=${Uri.encodeComponent('$title\n\n$body')}');
+    final uri = Uri.parse('https://wa.me/?text=${Uri.encodeComponent('$title\n\n$body\n\n$aiDisclaimer')}');
     await launchUrl(uri, mode: LaunchMode.externalApplication);
   }
 
@@ -356,7 +375,7 @@ class DocumentExportService {
     required String content,
   }) async {
     final uri = Uri.parse('https://mail.google.com/mail/?view=cm&fs=1&'
-        'su=${Uri.encodeComponent(title)}&body=${Uri.encodeComponent(content)}');
+        'su=${Uri.encodeComponent(title)}&body=${Uri.encodeComponent('$content\n\n$aiDisclaimer')}');
     await launchUrl(uri, mode: LaunchMode.externalApplication);
   }
 
@@ -599,6 +618,12 @@ class DocumentExportService {
       buffer.writeln('<w:p><w:r><w:t xml:space="preserve">'
           '${_escapeXml(line)}</w:t></w:r></w:p>');
     }
+
+    // Disclaimer footer.
+    buffer.writeln('<w:p/>');
+    buffer.writeln('<w:p><w:r><w:rPr><w:i/><w:sz w:val="18"/>'
+        '<w:color w:val="666666"/></w:rPr>'
+        '<w:t xml:space="preserve">${_escapeXml(aiDisclaimer)}</w:t></w:r></w:p>');
 
     buffer.writeln('<w:sectPr/>');
     buffer.writeln('</w:body>');

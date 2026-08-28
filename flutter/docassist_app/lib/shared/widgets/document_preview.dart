@@ -126,6 +126,24 @@ class DocumentPreview extends StatelessWidget {
             child: Divider(height: 1, color: Color(0xFFD1D5DB)),
           ),
           ...blocks,
+          const Padding(
+            padding: EdgeInsets.only(top: 16),
+            child: Divider(height: 1, color: Color(0xFFE5E7EB)),
+          ),
+          const Padding(
+            padding: EdgeInsets.only(top: 10),
+            child: Row(crossAxisAlignment: CrossAxisAlignment.start, children: [
+              Icon(Icons.info_outline_rounded, size: 14, color: Color(0xFF9CA3AF)),
+              SizedBox(width: 6),
+              Expanded(
+                child: Text(
+                  'This document is AI-generated. Please refer to the original document before taking any further action.',
+                  style: TextStyle(fontSize: 11, fontStyle: FontStyle.italic,
+                      color: Color(0xFF9CA3AF), height: 1.4),
+                ),
+              ),
+            ]),
+          ),
         ]),
       ),
     );

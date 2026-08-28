@@ -11,6 +11,7 @@ import '../../../core/theme/app_theme.dart';
 import '../../../core/network/dio_client.dart';
 import '../../../core/services/ai_history_service.dart';
 import '../../../core/services/clipboard_helper.dart';
+import '../../../core/services/document_export_service.dart';
 import '../../../shared/widgets/feature_history_sheet.dart';
 import '../../../shared/widgets/fun_loading_word.dart';
 
@@ -200,7 +201,7 @@ class _ComplaintReplyScreenState extends ConsumerState<ComplaintReplyScreen> {
     try {
       final response = await DioClient.instance.post(
         '/ai/complaint-reply/download',
-        data: {'text': text, 'filename': 'complaint_reply.docx'},
+        data: {'text': '$text\n\n${DocumentExportService.aiDisclaimer}', 'filename': 'complaint_reply.docx'},
         options: Options(responseType: ResponseType.bytes),
       );
 
@@ -243,7 +244,7 @@ class _ComplaintReplyScreenState extends ConsumerState<ComplaintReplyScreen> {
     try {
       final response = await DioClient.instance.post(
         '/ai/complaint-reply/download-pdf',
-        data: {'text': text, 'filename': 'complaint_reply.pdf'},
+        data: {'text': '$text\n\n${DocumentExportService.aiDisclaimer}', 'filename': 'complaint_reply.pdf'},
         options: Options(responseType: ResponseType.bytes),
       );
 

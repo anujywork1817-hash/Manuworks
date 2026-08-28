@@ -41,7 +41,7 @@ Future<void> showShareOptionsSheet(
           subtitle: 'Copy the full content to your clipboard',
           onTap: () async {
             Navigator.pop(sheetContext);
-            final ok = await copyToClipboard(content);
+            final ok = await copyToClipboard('$content\n\n${DocumentExportService.aiDisclaimer}');
             if (context.mounted) {
               ScaffoldMessenger.of(context).showSnackBar(SnackBar(
                 content: Text(ok ? 'Copied to clipboard' : 'Copy failed — try selecting the text instead'),

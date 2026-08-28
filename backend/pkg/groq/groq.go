@@ -682,25 +682,69 @@ Document:
 // TranslateDocument returns the document translated to targetLanguage.
 // Plain-text prompt (no JSON wrapping) — JSON wrapping was unreliable for
 // long documents because the model would truncate mid-JSON and break parsing.
+//
+// The document is split into chunks and translated piece by piece instead
+// of in one request. This does two things at once: it keeps every single
+// request comfortably under Groq's 8,000 tokens/minute limit (so a
+// Claude-rate-limit fallback to Groq doesn't error out), and — the more
+// important part — it means the FULL document gets translated instead of
+// being cut short by a single request's output token cap, however long
+// the source document is.
 func (c *Client) TranslateDocument(ctx context.Context, text, targetLanguage string) (*TranslationResponse, error) {
 	system := "You are a professional translator. Respond with ONLY the translated text. No JSON, no preamble, no explanations, no quotation marks around the output."
-	prompt := "Translate the following document into " + targetLanguage + ".\n\nDocument:\n" + text
 
-	raw, err := c.generate(ctx, system, prompt, 3500)
-	if err != nil {
-		return nil, fmt.Errorf("translate: %w", err)
-	}
+	const chunkChars = 4000 // keeps input+output safely under Groq's 8000 TPM cap
+	chunks := splitIntoChunks(text, chunkChars)
 
-	cleaned := strings.TrimSpace(raw)
-	if len(cleaned) > 1 && cleaned[0] == '"' && cleaned[len(cleaned)-1] == '"' {
-		cleaned = cleaned[1 : len(cleaned)-1]
+	translatedChunks := make([]string, len(chunks))
+	for i, chunk := range chunks {
+		prompt := "Translate the following text into " + targetLanguage +
+			". This is part " + fmt.Sprintf("%d of %d", i+1, len(chunks)) +
+			" of a larger document — translate only this part, preserving its meaning and structure.\n\nText:\n" + chunk
+
+		raw, err := c.generate(ctx, system, prompt, 3500)
+		if err != nil {
+			return nil, fmt.Errorf("translate (part %d/%d): %w", i+1, len(chunks), err)
+		}
+
+		cleaned := strings.TrimSpace(raw)
+		if len(cleaned) > 1 && cleaned[0] == '"' && cleaned[len(cleaned)-1] == '"' {
+			cleaned = cleaned[1 : len(cleaned)-1]
+		}
+		translatedChunks[i] = cleaned
 	}
 
 	return &TranslationResponse{
-		TranslatedText: cleaned,
+		TranslatedText: strings.Join(translatedChunks, "\n\n"),
 		SourceLanguage: "auto",
 		TargetLanguage: targetLanguage,
 	}, nil
+}
+
+// splitIntoChunks splits text into non-overlapping pieces of at most
+// maxChars each, breaking at paragraph or sentence boundaries where
+// possible so a chunk boundary doesn't land mid-sentence.
+func splitIntoChunks(text string, maxChars int) []string {
+	if len(text) <= maxChars {
+		return []string{text}
+	}
+	var chunks []string
+	remaining := text
+	for len(remaining) > maxChars {
+		cut := maxChars
+		window := remaining[:maxChars]
+		if idx := strings.LastIndex(window, "\n\n"); idx > maxChars/2 {
+			cut = idx + 2
+		} else if idx := strings.LastIndexAny(window, ".!?\n"); idx > maxChars/2 {
+			cut = idx + 1
+		}
+		chunks = append(chunks, remaining[:cut])
+		remaining = remaining[cut:]
+	}
+	if strings.TrimSpace(remaining) != "" {
+		chunks = append(chunks, remaining)
+	}
+	return chunks
 }
 
 func (c *Client) Translate(ctx context.Context, text, targetLanguage string) (*TranslationResponse, error) {

@@ -369,6 +369,8 @@ class _AiFeatureDetailScreenState extends ConsumerState<AiFeatureDetailScreen> {
     final docsState = ref.read(documentProvider);
     final doc = await showModalBottomSheet<Document>(
       context: context,
+      useRootNavigator: true,
+      isScrollControlled: true,
       shape: const RoundedRectangleBorder(
         borderRadius: BorderRadius.vertical(top: Radius.circular(16)),
       ),

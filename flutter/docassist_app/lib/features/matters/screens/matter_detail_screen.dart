@@ -198,6 +198,7 @@ class _MatterDetailScreenState extends ConsumerState<MatterDetailScreen> {
   void _openDocumentSheet(List<Document> allDocs) {
     showModalBottomSheet(
       context: context,
+      useRootNavigator: true,
       isScrollControlled: true,
       shape: const RoundedRectangleBorder(
           borderRadius: BorderRadius.vertical(top: Radius.circular(20))),

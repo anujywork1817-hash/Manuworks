@@ -99,6 +99,8 @@ class _DocumentDetailScreenState extends ConsumerState<DocumentDetailScreen> {
     ];
     return showModalBottomSheet<String>(
       context: context,
+      useRootNavigator: true,
+      isScrollControlled: true,
       shape: const RoundedRectangleBorder(
         borderRadius: BorderRadius.vertical(top: Radius.circular(16)),
       ),

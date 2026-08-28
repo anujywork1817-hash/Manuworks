@@ -783,6 +783,7 @@ class _DocSelector extends StatelessWidget {
   void _showPicker(BuildContext context, List<Document> available) {
     showModalBottomSheet(
       context: context,
+      useRootNavigator: true,
       isScrollControlled: true,
       backgroundColor: Colors.transparent,
       builder: (_) => _DocPickerSheet(

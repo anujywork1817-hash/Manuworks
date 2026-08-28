@@ -17,6 +17,11 @@ Future<void> showShareOptionsSheet(
 }) {
   return showModalBottomSheet(
     context: context,
+    // Without this, the sheet attaches to the nested ShellRoute navigator
+    // and renders BELOW the app's persistent bottom nav bar instead of
+    // above it — clipping the last option(s) behind the nav bar.
+    useRootNavigator: true,
+    isScrollControlled: true,
     shape: const RoundedRectangleBorder(
       borderRadius: BorderRadius.vertical(top: Radius.circular(16)),
     ),

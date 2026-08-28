@@ -301,6 +301,7 @@ class _GeneralChatScreenState extends ConsumerState<GeneralChatScreen> {
     if (!mounted) return;
     await showModalBottomSheet(
       context: context,
+      useRootNavigator: true,
       isScrollControlled: true,
       builder: (ctx) => _GeneralChatHistorySheet(
         sessions: _allSessions,

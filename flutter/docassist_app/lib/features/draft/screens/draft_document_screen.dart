@@ -1214,6 +1214,7 @@ class _DraftDocumentScreenState extends ConsumerState<DraftDocumentScreen> {
   void _showPromptTemplates(BuildContext context) {
     showModalBottomSheet(
       context: context,
+      useRootNavigator: true,
       isScrollControlled: true,
       backgroundColor: Colors.transparent,
       builder: (ctx) => DraggableScrollableSheet(

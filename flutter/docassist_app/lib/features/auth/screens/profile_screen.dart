@@ -299,6 +299,7 @@ class _ProfileScreenState extends ConsumerState<ProfileScreen> {
   void _showEditProfileSheet(BuildContext context, Map<String, dynamic> user) {
     showModalBottomSheet(
       context: context,
+      useRootNavigator: true,
       isScrollControlled: true,
       backgroundColor: Colors.transparent,
       builder: (_) => _EditProfileSheet(
@@ -312,6 +313,7 @@ class _ProfileScreenState extends ConsumerState<ProfileScreen> {
   void _showChangePasswordSheet(BuildContext context) {
     showModalBottomSheet(
       context: context,
+      useRootNavigator: true,
       isScrollControlled: true,
       backgroundColor: Colors.transparent,
       builder: (_) => const _ChangePasswordSheet(),

@@ -14,6 +14,7 @@ import (
 type Config struct {
     Groq    GroqConfig
     Claude  ClaudeConfig
+    OneAI   OneAIConfig
 	App      AppConfig
 	Postgres PostgresConfig
 	Redis    RedisConfig
@@ -224,6 +225,10 @@ func Load() *Config {
             APIKey: getStr("ANTHROPIC_API_KEY", ""),
             Model:  getStr("CLAUDE_MODEL", "claude-opus-5"),
         },
+        OneAI: OneAIConfig{
+            APIKey:  getStr("ONEAI_API_KEY", ""),
+            BaseURL: getStr("ONEAI_BASE_URL", "https://34-224-90-21.sslip.io"),
+        },
         Gemini: GeminiConfig{
 			// Optional for local/dev runs with only a Groq key configured —
 			// Gemini-backed features (semantic search, embeddings) are
@@ -432,9 +437,19 @@ type GroqConfig struct {
     Model   string
 }
 
-// ClaudeConfig holds the primary AI provider's settings. Groq (above) is
-// used as the automatic fallback whenever Claude is unset or rate-limited.
+// ClaudeConfig holds the secondary AI provider's settings — tried after
+// OneAI and before the Groq fallback. Groq (above) is used as the final
+// automatic fallback whenever both OneAI and Claude are unset or
+// rate-limited.
 type ClaudeConfig struct {
     APIKey string
     Model  string
+}
+
+// OneAIConfig holds the primary AI provider's settings (a self-hosted
+// service). Claude, then Groq, are used as automatic fallbacks whenever
+// OneAI is unset or rate-limited.
+type OneAIConfig struct {
+    APIKey  string
+    BaseURL string
 }

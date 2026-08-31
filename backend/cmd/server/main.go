@@ -185,11 +185,15 @@ func main() {
 		Model:        cfg.Groq.Model,
 		ClaudeAPIKey: cfg.Claude.APIKey,
 		ClaudeModel:  cfg.Claude.Model,
+		OneAIAPIKey:  cfg.OneAI.APIKey,
+		OneAIBaseURL: cfg.OneAI.BaseURL,
 	})
-	if cfg.Claude.APIKey != "" {
+	if cfg.OneAI.APIKey != "" {
+		logger.Info("OneAI configured as primary AI provider, Claude then Groq as fallback")
+	} else if cfg.Claude.APIKey != "" {
 		logger.Info("Claude configured as primary AI provider, Groq as fallback")
 	} else {
-		logger.Info("ANTHROPIC_API_KEY not set — using Groq as the AI provider")
+		logger.Info("ANTHROPIC_API_KEY / ONEAI_API_KEY not set — using Groq as the AI provider")
 	}
     aiSvc := aiService.NewAIService(documentRepository, geminiClient, groqClient, qdrantClient, ocrService, chatRepository)
 	searchSvc := searchService.NewSearchService(db, geminiClient, qdrantClient)

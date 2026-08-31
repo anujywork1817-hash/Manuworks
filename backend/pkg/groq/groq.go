@@ -39,10 +39,10 @@ type groqKeySlot struct {
 	cooldownUntil time.Time
 }
 
-// Client talks to Claude (primary) and Groq (secondary/fallback). Every
-// public method tries Claude first; if Claude is unset, rate-limited, or
-// out of quota, it transparently falls back to Groq until Claude's limit
-// is expected to have reset.
+// Client talks to OneAI (primary), Claude (secondary), and Groq
+// (tertiary/fallback). Every public method tries OneAI first; if OneAI is
+// unset, rate-limited, or errors, it falls back to Claude, then to Groq —
+// each tier only used when the one before it is unavailable.
 //
 // Multiple Groq keys are supported. When one key exhausts its daily token
 // quota it is marked cooling-down and the next key is used automatically —
@@ -56,11 +56,16 @@ type Client struct {
 	claudeModel  string
 	claudeOn     bool
 
+	oneAIBaseURL string
+	oneAIKey     string
+	oneAIOn      bool
+
 	mu                  sync.Mutex
 	claudeCooldownUntil time.Time
+	oneAICooldownUntil  time.Time
 }
 
-// Config holds Groq + Claude configuration
+// Config holds OneAI + Claude + Groq configuration
 type Config struct {
 	APIKey  string   // Primary Groq API key
 	APIKeys []string // Additional Groq keys for rotation (GROQ_API_KEY_2 … _5)
@@ -69,6 +74,9 @@ type Config struct {
 
 	ClaudeAPIKey string
 	ClaudeModel  string
+
+	OneAIAPIKey  string
+	OneAIBaseURL string
 }
 
 // --- Request/Response types ---
@@ -206,6 +214,9 @@ func NewClient(cfg *Config) *Client {
 		claudeClient: claudeClient,
 		claudeModel:  claudeModel,
 		claudeOn:     cfg.ClaudeAPIKey != "",
+		oneAIBaseURL: strings.TrimRight(cfg.OneAIBaseURL, "/"),
+		oneAIKey:     cfg.OneAIAPIKey,
+		oneAIOn:      cfg.OneAIAPIKey != "" && cfg.OneAIBaseURL != "",
 		httpClient:   &http.Client{Timeout: timeout, Transport: transport},
 	}
 }
@@ -253,6 +264,26 @@ func (c *Client) setClaudeCooldown(d time.Duration) {
 	c.claudeCooldownUntil = time.Now().Add(d)
 }
 
+// oneAIAvailable reports whether OneAI is configured and not currently in
+// a rate-limit cooldown.
+func (c *Client) oneAIAvailable() bool {
+	if !c.oneAIOn {
+		return false
+	}
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return time.Now().After(c.oneAICooldownUntil)
+}
+
+// setOneAICooldown skips OneAI for the given duration after a rate-limit
+// response, so subsequent calls fall straight through to Claude/Groq
+// instead of failing against OneAI first every time.
+func (c *Client) setOneAICooldown(d time.Duration) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.oneAICooldownUntil = time.Now().Add(d)
+}
+
 // parseRetryAfter parses "try again in 33m14.976s" or "try again in 1.5s".
 var retryAfterMinRe = regexp.MustCompile(`try again in (\d+)m([0-9.]+)s`)
 var retryAfterSecRe = regexp.MustCompile(`try again in ([0-9.]+)s`)
@@ -283,12 +314,27 @@ func formatWait(d time.Duration) string {
 
 // --- Core API call ---
 
-// generate tries Claude (primary) first, then falls back to Groq
-// (secondary) if Claude is unset, rate-limited, or out of quota.
+// generate tries OneAI (primary) first, then Claude (secondary), then
+// falls back to Groq (tertiary) if both are unset, rate-limited, or erroring.
 func (c *Client) generate(ctx context.Context, systemPrompt, userPrompt string, maxTokens int) (string, error) {
 	msgs := []message{
 		{Role: "system", Content: systemPrompt},
 		{Role: "user", Content: userPrompt},
+	}
+
+	if c.oneAIAvailable() {
+		result, retryAfter, err := c.doOneAIRequest(ctx, systemPrompt, msgs, maxTokens)
+		if err == nil {
+			logger.Debug("AI request served by OneAI")
+			return result, nil
+		}
+		if retryAfter > 0 {
+			c.setOneAICooldown(retryAfter)
+			logger.Warn("OneAI rate-limited, switching to Claude/Groq until it resets",
+				logger.Err(err), logger.Str("resume_at", time.Now().Add(retryAfter).Format(time.RFC3339)))
+		} else {
+			logger.Warn("OneAI request failed, falling back to Claude/Groq for this request", logger.Err(err))
+		}
 	}
 
 	if c.claudeAvailable() {
@@ -405,6 +451,92 @@ func (c *Client) doClaudeRequest(ctx context.Context, systemPrompt string, msgs 
 	return text.String(), 0, nil
 }
 
+// oneAIRequest/oneAIResponse mirror the OneAI service's single-field
+// /chat contract: {"message": "..."} in, {"reply": "..."} out. There's no
+// system-prompt, multi-turn, or max_tokens support in that contract, so
+// doOneAIRequest flattens the system prompt + conversation into one
+// message string before sending it.
+type oneAIRequest struct {
+	Message string `json:"message"`
+}
+
+type oneAIResponse struct {
+	Reply string `json:"reply"`
+	Error string `json:"error,omitempty"`
+}
+
+// doOneAIRequest performs a single call against the OneAI /chat endpoint.
+// The returned duration is non-zero only when OneAI signalled a rate limit
+// (HTTP 429 — OneAI's documented limit is 20 requests/minute per IP), so
+// callers know how long to skip OneAI before retrying.
+func (c *Client) doOneAIRequest(ctx context.Context, systemPrompt string, msgs []message, maxTokens int) (string, time.Duration, error) {
+	var b strings.Builder
+	if systemPrompt != "" {
+		b.WriteString(systemPrompt)
+		b.WriteString("\n\n")
+	}
+	for _, m := range msgs {
+		if m.Role == "system" {
+			continue
+		}
+		if m.Role == "assistant" {
+			b.WriteString("Assistant: ")
+		} else {
+			b.WriteString("User: ")
+		}
+		b.WriteString(m.Content)
+		b.WriteString("\n\n")
+	}
+
+	body, err := json.Marshal(oneAIRequest{Message: strings.TrimSpace(b.String())})
+	if err != nil {
+		return "", 0, fmt.Errorf("oneai: marshal request: %w", err)
+	}
+
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, c.oneAIBaseURL+"/chat", bytes.NewReader(body))
+	if err != nil {
+		return "", 0, fmt.Errorf("oneai: build request: %w", err)
+	}
+	req.Header.Set("Authorization", "Bearer "+c.oneAIKey)
+	req.Header.Set("Content-Type", "application/json")
+
+	resp, err := c.httpClient.Do(req)
+	if err != nil {
+		return "", 0, fmt.Errorf("oneai: request failed: %w", err)
+	}
+	defer resp.Body.Close()
+
+	respBody, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return "", 0, fmt.Errorf("oneai: read response: %w", err)
+	}
+
+	if resp.StatusCode == http.StatusTooManyRequests {
+		retryAfter := 60 * time.Second
+		if ra := resp.Header.Get("Retry-After"); ra != "" {
+			if secs, perr := strconv.Atoi(ra); perr == nil && secs > 0 {
+				retryAfter = time.Duration(secs) * time.Second
+			}
+		}
+		return "", retryAfter, fmt.Errorf("oneai rate limit: %s", string(respBody))
+	}
+	if resp.StatusCode != http.StatusOK {
+		return "", 0, fmt.Errorf("oneai: HTTP %d: %s", resp.StatusCode, string(respBody))
+	}
+
+	var parsed oneAIResponse
+	if err := json.Unmarshal(respBody, &parsed); err != nil {
+		return "", 0, fmt.Errorf("oneai: parse response: %w", err)
+	}
+	if parsed.Error != "" {
+		return "", 0, fmt.Errorf("oneai: %s", parsed.Error)
+	}
+	if strings.TrimSpace(parsed.Reply) == "" {
+		return "", 0, fmt.Errorf("oneai: empty response")
+	}
+	return parsed.Reply, 0, nil
+}
+
 // doRequest performs a single chat-completion call against the given
 // provider endpoint (Groq). The returned duration is non-zero only when the
 // provider signalled a rate limit (HTTP 429), so callers know how long to
@@ -470,6 +602,24 @@ func (c *Client) doRequest(ctx context.Context, url, apiKey, model string, msgs 
 // full message list (Chat, HelpChat) instead of a single system+user pair.
 // Same Claude-first, Groq-fallback behavior, single attempt on each side.
 func (c *Client) chatCompletion(ctx context.Context, msgs []message, maxTokens int, temperature float64) (string, error) {
+	if c.oneAIAvailable() {
+		systemPrompt := ""
+		if len(msgs) > 0 && msgs[0].Role == "system" {
+			systemPrompt = msgs[0].Content
+		}
+		result, retryAfter, err := c.doOneAIRequest(ctx, systemPrompt, msgs, maxTokens)
+		if err == nil {
+			logger.Debug("AI request served by OneAI")
+			return result, nil
+		}
+		if retryAfter > 0 {
+			c.setOneAICooldown(retryAfter)
+			logger.Warn("OneAI rate-limited, switching to Claude/Groq until it resets",
+				logger.Err(err), logger.Str("resume_at", time.Now().Add(retryAfter).Format(time.RFC3339)))
+		} else {
+			logger.Warn("OneAI request failed, falling back to Claude/Groq for this request", logger.Err(err))
+		}
+	}
 	if c.claudeAvailable() {
 		systemPrompt := ""
 		if len(msgs) > 0 && msgs[0].Role == "system" {

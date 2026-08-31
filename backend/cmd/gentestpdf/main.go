@@ -189,6 +189,8 @@ func main() {
 		Model:        cfg.Groq.Model,
 		ClaudeAPIKey: cfg.Claude.APIKey,
 		ClaudeModel:  cfg.Claude.Model,
+		OneAIAPIKey:  cfg.OneAI.APIKey,
+		OneAIBaseURL: cfg.OneAI.BaseURL,
 	})
 	if cfg.Claude.APIKey != "" {
 		logger.Info("Claude configured as primary AI provider, Groq as fallback")

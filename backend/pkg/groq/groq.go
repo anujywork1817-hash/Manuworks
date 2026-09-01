@@ -317,12 +317,24 @@ func formatWait(d time.Duration) string {
 // generate tries OneAI (primary) first, then Claude (secondary), then
 // falls back to Groq (tertiary) if both are unset, rate-limited, or erroring.
 func (c *Client) generate(ctx context.Context, systemPrompt, userPrompt string, maxTokens int) (string, error) {
+	return c.generateFrom(ctx, systemPrompt, userPrompt, maxTokens, true)
+}
+
+// generateSkipOneAI is like generate but starts at Claude, skipping OneAI
+// entirely. Used for quality-sensitive tasks (currently: translation)
+// where OneAI's underlying free-tier model has shown noticeably lower
+// accuracy than Claude — everything else still goes through OneAI first.
+func (c *Client) generateSkipOneAI(ctx context.Context, systemPrompt, userPrompt string, maxTokens int) (string, error) {
+	return c.generateFrom(ctx, systemPrompt, userPrompt, maxTokens, false)
+}
+
+func (c *Client) generateFrom(ctx context.Context, systemPrompt, userPrompt string, maxTokens int, tryOneAI bool) (string, error) {
 	msgs := []message{
 		{Role: "system", Content: systemPrompt},
 		{Role: "user", Content: userPrompt},
 	}
 
-	if c.oneAIAvailable() {
+	if tryOneAI && c.oneAIAvailable() {
 		result, retryAfter, err := c.doOneAIRequest(ctx, systemPrompt, msgs, maxTokens)
 		if err == nil {
 			logger.Debug("AI request served by OneAI")
@@ -852,7 +864,10 @@ func (c *Client) TranslateDocument(ctx context.Context, text, targetLanguage str
 			". This is part " + fmt.Sprintf("%d of %d", i+1, len(chunks)) +
 			" of a larger document — translate only this part, preserving its meaning and structure.\n\nText:\n" + chunk
 
-		raw, err := c.generate(ctx, system, prompt, 3500)
+		// Skips OneAI — translation is accuracy-sensitive and OneAI's
+		// underlying free-tier model has shown noticeably lower quality
+		// here than Claude, so this goes straight to Claude (then Groq).
+		raw, err := c.generateSkipOneAI(ctx, system, prompt, 3500)
 		if err != nil {
 			return nil, fmt.Errorf("translate (part %d/%d): %w", i+1, len(chunks), err)
 		}

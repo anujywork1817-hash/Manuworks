@@ -966,11 +966,17 @@ func (s *aiService) DraftGeneric(ctx context.Context, userID uuid.UUID, docType,
 }
 
 func (s *aiService) CompareDocuments(ctx context.Context, userID, docID1, docID2 uuid.UUID) (*groq.CompareResponse, error) {
-	text1, err := s.getDocumentText(ctx, userID, docID1, 10000)
+	// Both documents go into ONE prompt together (the model needs to see
+	// them side by side to diff them), so this can't chunk the way the
+	// single-document features do — but 10,000 chars per doc (the old
+	// cap) was missing everything past the first few pages of most real
+	// contracts. 40,000 chars each (80k combined) stays comfortably
+	// within Claude's context while covering documents ~5x longer.
+	text1, err := s.getDocumentText(ctx, userID, docID1, 40000)
 	if err != nil {
 		return nil, fmt.Errorf("document 1: %w", err)
 	}
-	text2, err := s.getDocumentText(ctx, userID, docID2, 10000)
+	text2, err := s.getDocumentText(ctx, userID, docID2, 40000)
 	if err != nil {
 		return nil, fmt.Errorf("document 2: %w", err)
 	}

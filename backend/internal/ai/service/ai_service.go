@@ -95,6 +95,11 @@ type AIService interface {
 	AutoTag(ctx context.Context, userID, docID uuid.UUID) (*groq.AutoTagsResponse, error)
 	CheckGrammar(ctx context.Context, userID, docID uuid.UUID) (*groq.GrammarCheckResponse, error)
 	DraftLegalDoc(ctx context.Context, userID uuid.UUID, req groq.LegalDraftRequest) (*groq.LegalDraftResponse, error)
+	// DraftGeneric handles everything OUTSIDE court pleadings (contracts,
+	// advisories, due diligence, IP/employment/M&A documents, …) with
+	// neutral professional-document formatting instead of court-petition
+	// conventions.
+	DraftGeneric(ctx context.Context, userID uuid.UUID, docType, details string) (*groq.DraftResponse, error)
 	CompareDocuments(ctx context.Context, userID, docID1, docID2 uuid.UUID) (*groq.CompareResponse, error)
 	HelpChat(ctx context.Context, history []groq.ChatMessage, message string) (string, error)
 	GenerateComplaintReply(ctx context.Context, userID uuid.UUID, complaintText, existingReplyText string) (*ComplaintReplyResult, error)
@@ -740,6 +745,18 @@ func (s *aiService) CheckGrammar(ctx context.Context, userID, docID uuid.UUID) (
 
 func (s *aiService) DraftLegalDoc(ctx context.Context, userID uuid.UUID, req groq.LegalDraftRequest) (*groq.LegalDraftResponse, error) {
 	return s.groqClient.DraftLegalDocument(ctx, req)
+}
+
+// DraftGeneric drafts any non-court document (contracts, advisories, due
+// diligence memos, IP/employment/M&A documents, …) using neutral
+// professional-document formatting instead of DraftLegalDoc's Indian
+// court-petition conventions ("IN THE COURT OF...", "VERSUS", "Sheweth").
+// Routing a Franchise Agreement or NDA through the court-petition prompt
+// was producing agreements formatted (and worded) like litigation
+// filings — this is the correct path for everything outside
+// "Pleadings & Court Filings".
+func (s *aiService) DraftGeneric(ctx context.Context, userID uuid.UUID, docType, details string) (*groq.DraftResponse, error) {
+	return s.groqClient.DraftDocument(ctx, docType, details)
 }
 
 func (s *aiService) CompareDocuments(ctx context.Context, userID, docID1, docID2 uuid.UUID) (*groq.CompareResponse, error) {

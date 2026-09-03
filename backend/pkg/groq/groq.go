@@ -1051,10 +1051,24 @@ type RiskScanResponse struct {
 
 // DraftDocument generates a new legal/business document from a description.
 func (c *Client) DraftDocument(ctx context.Context, docType, details string) (*DraftResponse, error) {
-    system := "You are an expert legal and business document drafter. Draft professional, properly formatted documents following standard conventions for the requested document type. Respond with ONLY the document content. No JSON, no preamble, no markdown formatting symbols like ** or ##, just plain formatted text as it would appear in the final document."
-    prompt := "Draft a " + docType + " with the following details:\n\n" + details + "\n\nWrite the complete, ready-to-use document now."
+    system := "You are an expert legal and business document drafter with decades of experience drafting Indian commercial contracts, advisories, and transaction documents. Draft a complete, professional, properly STRUCTURED document following standard conventions for the requested document type. Respond with ONLY the document content — no JSON, no preamble, no closing commentary."
+    prompt := fmt.Sprintf(`Draft a complete, ready-to-use %s with the following details:
 
-    raw, err := c.generate(ctx, system, prompt, 4000)
+%s
+
+FORMATTING RULES (follow exactly — this document will be rendered and printed, structure matters):
+- Start with a centered title line in ALL CAPS (e.g. "FRANCHISE AGREEMENT")
+- For contracts/agreements: open with the parties' recital ("This Agreement is made on [date] between... and... (\"Parties\")") and WHEREAS clauses
+- Every major section heading MUST be on its own line, in ALL CAPS, with a blank line before and after it (e.g. "1. DEFINITIONS", "2. TERM AND TERMINATION") — never bury a heading inside a paragraph
+- Number every clause and sub-clause sequentially (1., 1.1, 1.2, 2., 2.1, ...)
+- Write each clause as a properly developed paragraph, not a one-line placeholder
+- End with a signature block: IN WITNESS WHEREOF, signature lines for each party, date, place
+- Do not use markdown symbols like ** or ## — use plain ALL-CAPS headings and numbered clauses as described above instead
+- Write the complete document — do not truncate, abbreviate, or leave any section as a placeholder
+
+Write the full document now:`, docType, details)
+
+    raw, err := c.generate(ctx, system, prompt, 6000)
     if err != nil {
         return nil, fmt.Errorf("draft document: %w", err)
     }

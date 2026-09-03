@@ -301,6 +301,36 @@ func (h *AIHandler) DraftLegalDocument(c *gin.Context) {
 	respond(c, http.StatusOK, true, "Draft generated", result)
 }
 
+// DraftGenericDocument handles any prompt-driven document that ISN'T a
+// court pleading — contracts, advisories, due diligence memos, IP/
+// employment/M&A documents, etc. — with neutral professional-document
+// formatting rather than DraftLegalDocument's court-petition conventions.
+func (h *AIHandler) DraftGenericDocument(c *gin.Context) {
+	userID, err := uuid.Parse(middleware.GetUserID(c))
+	if err != nil {
+		respond(c, http.StatusUnauthorized, false, "invalid token", nil)
+		return
+	}
+	var req struct {
+		DocumentType string `json:"document_type"`
+		Details      string `json:"details" binding:"required"`
+	}
+	if err := c.ShouldBindJSON(&req); err != nil || req.Details == "" {
+		respond(c, http.StatusBadRequest, false, "details is required", nil)
+		return
+	}
+	docType := req.DocumentType
+	if docType == "" {
+		docType = "document"
+	}
+	result, err := h.aiService.DraftGeneric(c.Request.Context(), userID, docType, req.Details)
+	if err != nil {
+		respond(c, http.StatusInternalServerError, false, err.Error(), nil)
+		return
+	}
+	respond(c, http.StatusOK, true, "Draft generated", result)
+}
+
 func (h *AIHandler) ExtractActionItems(c *gin.Context) {
 	docID, userID, ok := parseIDs(c)
 	if !ok {

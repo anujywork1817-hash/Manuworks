@@ -86,7 +86,22 @@ class DocumentPreview extends StatelessWidget {
       } else if (trimmed.startsWith('- ') || trimmed.startsWith('* ')) {
         flushParagraph();
         (bulletGroup ??= []).add(trimmed.substring(2));
-      } else if (RegExp(r'^\d+\.\s').hasMatch(trimmed)) {
+      } else if (_isAllCapsHeading(trimmed)) {
+        // Legal/contract drafts are deliberately written in plain text with
+        // ALL-CAPS section headings ("1. DEFINITIONS", "WHEREAS", "IN
+        // WITNESS WHEREOF") rather than markdown — recognizing that
+        // convention directly is what makes a drafted agreement actually
+        // look structured instead of one long justified paragraph.
+        flushBullets();
+        flushParagraph();
+        blocks.add(Padding(
+          padding: const EdgeInsets.only(top: 10, bottom: 8),
+          child: Text(trimmed,
+              style: const TextStyle(fontFamily: 'serif', fontSize: 14.5,
+                  fontWeight: FontWeight.bold, color: Color(0xFF1F2937),
+                  letterSpacing: 0.3)),
+        ));
+      } else if (RegExp(r'^\d+(\.\d+)*\.?\s').hasMatch(trimmed)) {
         flushBullets();
         flushParagraph();
         blocks.add(Padding(
@@ -148,6 +163,20 @@ class DocumentPreview extends StatelessWidget {
       ),
     );
   }
+}
+
+/// A short, all-uppercase line with no terminal sentence punctuation reads
+/// as a section heading in a plain-text legal/contract draft — e.g.
+/// "1. DEFINITIONS", "WHEREAS", "IN WITNESS WHEREOF", "FRANCHISE AGREEMENT".
+/// Deliberately conservative (short, no sentence-ending period) so an
+/// actual all-caps sentence in body text doesn't get misread as a heading.
+bool _isAllCapsHeading(String line) {
+  if (line.length < 3 || line.length > 90) return false;
+  if (!RegExp(r'[A-Z]').hasMatch(line)) return false; // must contain a letter
+  if (RegExp(r'[a-z]').hasMatch(line)) return false; // no lowercase letters
+  if (line.endsWith('.') || line.endsWith(',')) return false; // not a full sentence
+  final wordCount = line.trim().split(RegExp(r'\s+')).length;
+  return wordCount <= 12;
 }
 
 /// Renders one line/paragraph with basic **bold** segments recognized.

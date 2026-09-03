@@ -306,6 +306,7 @@ func main() {
 		protected.POST("/documents/:document_id/autotag", aiH.AutoTag)
 		protected.POST("/documents/:document_id/grammar", aiH.CheckGrammar)
 		protected.POST("/ai/draft-legal", aiH.DraftLegalDocument)
+		protected.POST("/ai/draft", aiH.DraftGenericDocument)
 		protected.POST("/ai/complaint-reply", aiH.ComplaintReplyGenerator)
 		protected.GET("/ai/complaint-reply/status/:job_id", aiH.GetComplaintReplyStatus)
 		protected.POST("/ai/complaint-reply/download", aiH.DownloadReplyDocx)

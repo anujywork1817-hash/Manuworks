@@ -811,8 +811,12 @@ class _DraftDocumentScreenState extends ConsumerState<DraftDocumentScreen> {
 
   /// Best-effort guess of the document type from the free-text prompt,
   /// so sending a prompt goes straight to generation instead of asking
-  /// the user to pick a type on a separate screen.
-  _DocType _guessDocType(String text) {
+  /// the user to pick a type on a separate screen. Returns null when the
+  /// text doesn't actually look like a court pleading — callers must not
+  /// silently default to Writ Petition, since that was routing contracts,
+  /// advisories, and every other non-litigation template through
+  /// court-petition formatting ("IN THE COURT OF...", "VERSUS", "Sheweth").
+  _DocType? _guessDocType(String text) {
     final lower = text.toLowerCase();
     bool has(String kw) => lower.contains(kw);
     if (has('writ') || has('article 226') || has('article 32')) return _docTypes[0];
@@ -825,32 +829,100 @@ class _DraftDocumentScreenState extends ConsumerState<DraftDocumentScreen> {
     if (has('affidavit')) return _docTypes[5];
     if (has('vakalatnama')) return _docTypes[9];
     if (has('appeal')) return _docTypes[7];
-    if (has('application')) return _docTypes[6];
-    return _docTypes[0];
+    if (has('application') && (has('court') || has('tribunal') || has('petition'))) return _docTypes[6];
+    return null;
+  }
+
+  /// The exact prompt-template match, if the submitted text is one of the
+  /// 86 ready-made templates — used to get a proper document title
+  /// ("Franchise Agreement") instead of guessing one from free text.
+  _PromptTemplate? _matchingTemplate(String text) {
+    for (final t in kDraftPromptTemplates) {
+      if (t.prompt == text) return t;
+    }
+    return null;
   }
 
   Future<void> _submitPrompt() async {
     final text = _promptCtrl.text.trim();
     if (text.isEmpty) return;
     final guessed = _guessDocType(text);
+
+    if (guessed != null) {
+      // Looks like an actual court pleading — use the litigation-drafting
+      // flow (court heading, VERSUS, Sheweth, verification clause, etc.).
+      setState(() {
+        _selected = guessed;
+        _factsCtrl.text = text;
+        _additionalCtrl.text = text;
+        _showPromptEntry = false;
+        _promptGenerating = true;
+      });
+      await _generate(requirePetitioner: false);
+      if (!mounted) return;
+      if (_result == null) {
+        final message = _error ?? 'Generation failed. Please try again.';
+        setState(() {
+          _promptGenerating = false;
+          _showPromptEntry = true;
+          _error = null;
+        });
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text(message), behavior: SnackBarBehavior.floating),
+        );
+      } else {
+        setState(() => _promptGenerating = false);
+      }
+      return;
+    }
+
+    // Everything else — contracts, advisories, due diligence, IP/
+    // employment/M&A documents, litigation strategy memos, etc. — goes
+    // through the generic drafter with neutral professional-document
+    // formatting instead of court-petition conventions.
+    final template = _matchingTemplate(text);
+    final docType = template?.title ??
+        (text.length > 60 ? '${text.substring(0, 60)}…' : text);
     setState(() {
-      // Carry the free-text prompt into Facts + Additional Information so
-      // the AI has it as context, and go straight to generation — no
-      // intermediate "Select Document Type" screen.
-      _selected = guessed;
-      _factsCtrl.text = text;
-      _additionalCtrl.text = text;
+      _selected = _DocType(docType, docType, Icons.description_outlined,
+          AppColors.primary, template?.category ?? '');
       _showPromptEntry = false;
       _promptGenerating = true;
+      _result = null;
+      _error = null;
     });
-    await _generate(requirePetitioner: false);
-    if (!mounted) return;
-    if (_result == null) {
-      // Generation failed (network issue, daily limit, etc.). Never fall
-      // through to the raw multi-field form / document-type picker — send
-      // the user straight back to the prompt box with the error surfaced,
-      // same as every other AI tool's flow.
-      final message = _error ?? 'Generation failed. Please try again.';
+
+    try {
+      final res = await DioClient.post('/ai/draft', data: {
+        'document_type': docType,
+        'details': text,
+      });
+      final data = res['data'] as Map<String, dynamic>;
+      final content = data['content'] ?? '';
+      final title = data['title'] ?? docType;
+
+      try {
+        await AiHistoryService.save(
+          featureId: 'draft',
+          title: title,
+          subtitle: docType,
+          content: content,
+        );
+      } catch (_) {}
+
+      if (mounted) {
+        setState(() {
+          _result = content;
+          _resultTitle = title;
+          _promptGenerating = false;
+          _saved = true;
+        });
+      }
+    } catch (e) {
+      if (!mounted) return;
+      final message = e.toString().contains('Daily AI')
+          ? 'Daily AI limit reached. Please try again later.'
+          : 'Generation failed: ${e.toString()}';
       setState(() {
         _promptGenerating = false;
         _showPromptEntry = true;
@@ -859,8 +931,6 @@ class _DraftDocumentScreenState extends ConsumerState<DraftDocumentScreen> {
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(content: Text(message), behavior: SnackBarBehavior.floating),
       );
-    } else {
-      setState(() => _promptGenerating = false);
     }
   }
 

@@ -40,9 +40,17 @@ type groqKeySlot struct {
 }
 
 // Client talks to OneAI (primary), Claude (secondary), and Groq
-// (tertiary/fallback). Every public method tries OneAI first; if OneAI is
-// unset, rate-limited, or errors, it falls back to Claude, then to Groq —
-// each tier only used when the one before it is unavailable.
+// (tertiary/fallback).
+//
+// OneAI is a self-hosted proxy currently backed by an OpenRouter free-tier
+// model — fine for casual chat, but it has shown noticeably lower accuracy
+// on structured/precision-sensitive tasks (JSON extraction, translation,
+// legal drafting). So: the two free-form chat methods (Chat, HelpChat) try
+// OneAI first via generate()/chatCompletion(); every document-analysis,
+// extraction, translation, and drafting method calls generateSkipOneAI()
+// instead, going straight to Claude (then Groq) for accuracy. Either way,
+// each tier is only used when the one before it is unset, rate-limited,
+// or erroring.
 //
 // Multiple Groq keys are supported. When one key exhausts its daily token
 // quota it is marked cooling-down and the next key is used automatically —
@@ -694,7 +702,7 @@ any page or section is left out, not just the opening pages. Respond ONLY with t
 Document:
 %s`, len(text)/5, text)
 
-	raw, err := c.generate(ctx, system, prompt, 1800)
+	raw, err := c.generateSkipOneAI(ctx, system, prompt, 1800)
 	if err != nil {
 		return nil, fmt.Errorf("summarize: %w", err)
 	}
@@ -714,7 +722,7 @@ func (c *Client) ExtractKeyPoints(ctx context.Context, text string) (*KeyPointsR
 Document:
 %s`, text)
 
-	raw, err := c.generate(ctx, system, prompt, 800)
+	raw, err := c.generateSkipOneAI(ctx, system, prompt, 800)
 	if err != nil {
 		return nil, fmt.Errorf("key points: %w", err)
 	}
@@ -738,7 +746,7 @@ If no dates found, return {"events":[{"date":"Not specified","event":"No timelin
 Document:
 %s`, text)
 
-	raw, err := c.generate(ctx, system, prompt, 1200)
+	raw, err := c.generateSkipOneAI(ctx, system, prompt, 1200)
 	if err != nil {
 		return nil, fmt.Errorf("timeline: %w", err)
 	}
@@ -809,7 +817,7 @@ func (c *Client) ExtractActionItems(ctx context.Context, text string) (*ActionIt
 Document:
 %s`, text)
 
-	raw, err := c.generate(ctx, system, prompt, 800)
+	raw, err := c.generateSkipOneAI(ctx, system, prompt, 800)
 	if err != nil {
 		return nil, fmt.Errorf("action items: %w", err)
 	}
@@ -829,7 +837,7 @@ func (c *Client) AnalyzeDocument(ctx context.Context, text string) (*AnalysisRes
 Document:
 %s`, text)
 
-	raw, err := c.generate(ctx, system, prompt, 1000)
+	raw, err := c.generateSkipOneAI(ctx, system, prompt, 1000)
 	if err != nil {
 		return nil, fmt.Errorf("analyze: %w", err)
 	}
@@ -926,7 +934,7 @@ Question: %s
 Document:
 %s`, question, text)
 
-	raw, err := c.generate(ctx, system, prompt, 1000)
+	raw, err := c.generateSkipOneAI(ctx, system, prompt, 1000)
 	if err != nil {
 		return nil, fmt.Errorf("answer question: %w", err)
 	}
@@ -946,7 +954,7 @@ func (c *Client) GenerateReport(ctx context.Context, text, reportType string) (*
 Document:
 %s`, reportType, reportType, text)
 
-	raw, err := c.generate(ctx, system, prompt, 2000)
+	raw, err := c.generateSkipOneAI(ctx, system, prompt, 2000)
 	if err != nil {
 		return nil, fmt.Errorf("generate report: %w", err)
 	}
@@ -1068,7 +1076,7 @@ FORMATTING RULES (follow exactly — this document will be rendered and printed,
 
 Write the full document now:`, docType, details)
 
-    raw, err := c.generate(ctx, system, prompt, 6000)
+    raw, err := c.generateSkipOneAI(ctx, system, prompt, 6000)
     if err != nil {
         return nil, fmt.Errorf("draft document: %w", err)
     }
@@ -1122,7 +1130,7 @@ FORMATTING RULES:
 
 Write the full document now:`, req.DocumentType, req.CourtName, caseRef, req.PetitionerName, req.RespondentName, req.Subject, req.Facts, req.ReliefSought, acts, extra)
 
-    raw, err := c.generate(ctx, system, prompt, 4000)
+    raw, err := c.generateSkipOneAI(ctx, system, prompt, 4000)
     if err != nil {
         return nil, fmt.Errorf("draft legal document: %w", err)
     }
@@ -1158,7 +1166,7 @@ Rules:
 Document:
 %s`, text)
 
-    raw, err := c.generate(ctx, system, prompt, 2000)
+    raw, err := c.generateSkipOneAI(ctx, system, prompt, 2000)
     if err != nil {
         return nil, fmt.Errorf("grammar check: %w", err)
     }
@@ -1195,7 +1203,7 @@ complexity: simple (routine/standard), moderate (some complexity), complex (mult
 Document:
 %s`, text)
 
-    raw, err := c.generate(ctx, system, prompt, 600)
+    raw, err := c.generateSkipOneAI(ctx, system, prompt, 600)
     if err != nil {
         return nil, fmt.Errorf("auto-tag: %w", err)
     }
@@ -1232,7 +1240,7 @@ Return {"deadlines":[]} if no time-bound obligations found.
 Document:
 %s`, text)
 
-    raw, err := c.generate(ctx, system, prompt, 1500)
+    raw, err := c.generateSkipOneAI(ctx, system, prompt, 1500)
     if err != nil {
         return nil, fmt.Errorf("deadlines: %w", err)
     }
@@ -1264,7 +1272,7 @@ List up to 8 most important risks. Return {"overall_risk":"low","clauses":[]} if
 Document:
 %s`, text)
 
-    raw, err := c.generate(ctx, system, prompt, 1800)
+    raw, err := c.generateSkipOneAI(ctx, system, prompt, 1800)
     if err != nil {
         return nil, fmt.Errorf("risk scan: %w", err)
     }
@@ -1315,7 +1323,7 @@ DOCUMENT A:
 DOCUMENT B:
 %s`, text1, text2)
 
-	raw, err := c.generate(ctx, system, prompt, 2000)
+	raw, err := c.generateSkipOneAI(ctx, system, prompt, 2000)
 	if err != nil {
 		return nil, fmt.Errorf("compare documents: %w", err)
 	}
@@ -1450,7 +1458,7 @@ EXISTING REPLY (TEMPLATE — use this structure and language):
 
 Write the complete new reply now:`, complaintText, existingReplyText)
 
-	raw, err := c.generate(ctx, system, prompt, 8000)
+	raw, err := c.generateSkipOneAI(ctx, system, prompt, 8000)
 	if err != nil {
 		return nil, fmt.Errorf("generate complaint reply: %w", err)
 	}
@@ -1508,7 +1516,7 @@ Categories:
 Document:
 %s`, text)
 
-    raw, err := c.generate(ctx, system, prompt, 1200)
+    raw, err := c.generateSkipOneAI(ctx, system, prompt, 1200)
     if err != nil {
         return nil, fmt.Errorf("citations: %w", err)
     }

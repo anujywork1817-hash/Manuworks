@@ -447,7 +447,7 @@ func (s *aiService) AnswerQuestion(ctx context.Context, userID, docID uuid.UUID,
 	relevant, err := s.retrieveRelevantChunks(ctx, docID, userID, question, 8)
 	if err != nil || len(relevant) == 0 {
 		// Fallback: use full document text
-		text, err := s.getDocumentText(ctx, userID, docID, 12000)
+		text, err := s.getDocumentText(ctx, userID, docID, 60000)
 		if err != nil {
 			return nil, err
 		}
@@ -472,7 +472,7 @@ func (s *aiService) Chat(ctx context.Context, userID, docID uuid.UUID, req ChatR
 	var contextText string
 	if err != nil || len(relevant) == 0 {
 		// Fallback to full document
-		contextText, err = s.getDocumentText(ctx, userID, docID, 12000)
+		contextText, err = s.getDocumentText(ctx, userID, docID, 60000)
 		if err != nil {
 			return nil, err
 		}
@@ -505,7 +505,7 @@ func (s *aiService) Chat(ctx context.Context, userID, docID uuid.UUID, req ChatR
 func (s *aiService) docChatContext(ctx context.Context, userID, docID uuid.UUID, message string) (string, error) {
 	relevant, err := s.retrieveRelevantChunks(ctx, docID, userID, message, 5)
 	if err != nil || len(relevant) == 0 {
-		return s.getDocumentText(ctx, userID, docID, 12000)
+		return s.getDocumentText(ctx, userID, docID, 60000)
 	}
 	var sb strings.Builder
 	for _, chunk := range relevant {
@@ -696,7 +696,7 @@ func (s *aiService) Translate(ctx context.Context, userID, docID uuid.UUID, targ
 }
 
 func (s *aiService) GenerateReport(ctx context.Context, userID, docID uuid.UUID, reportType string) (*groq.ReportResponse, error) {
-	text, err := s.getDocumentText(ctx, userID, docID, 15000)
+	text, err := s.getDocumentText(ctx, userID, docID, 60000)
 	if err != nil {
 		return nil, err
 	}
@@ -704,7 +704,7 @@ func (s *aiService) GenerateReport(ctx context.Context, userID, docID uuid.UUID,
 }
 
 func (s *aiService) ExtractCitations(ctx context.Context, userID, docID uuid.UUID) (*groq.CitationsResponse, error) {
-	text, err := s.getDocumentText(ctx, userID, docID, 20000)
+	text, err := s.getDocumentText(ctx, userID, docID, 60000)
 	if err != nil {
 		return nil, err
 	}
@@ -712,7 +712,7 @@ func (s *aiService) ExtractCitations(ctx context.Context, userID, docID uuid.UUI
 }
 
 func (s *aiService) ScanRisks(ctx context.Context, userID, docID uuid.UUID) (*groq.RiskScanResponse, error) {
-	text, err := s.getDocumentText(ctx, userID, docID, 20000)
+	text, err := s.getDocumentText(ctx, userID, docID, 60000)
 	if err != nil {
 		return nil, err
 	}
@@ -720,7 +720,7 @@ func (s *aiService) ScanRisks(ctx context.Context, userID, docID uuid.UUID) (*gr
 }
 
 func (s *aiService) ExtractDeadlines(ctx context.Context, userID, docID uuid.UUID) (*groq.DeadlineResponse, error) {
-	text, err := s.getDocumentText(ctx, userID, docID, 20000)
+	text, err := s.getDocumentText(ctx, userID, docID, 60000)
 	if err != nil {
 		return nil, err
 	}
@@ -728,7 +728,7 @@ func (s *aiService) ExtractDeadlines(ctx context.Context, userID, docID uuid.UUI
 }
 
 func (s *aiService) AutoTag(ctx context.Context, userID, docID uuid.UUID) (*groq.AutoTagsResponse, error) {
-	text, err := s.getDocumentText(ctx, userID, docID, 15000)
+	text, err := s.getDocumentText(ctx, userID, docID, 60000)
 	if err != nil {
 		return nil, err
 	}
@@ -736,7 +736,7 @@ func (s *aiService) AutoTag(ctx context.Context, userID, docID uuid.UUID) (*groq
 }
 
 func (s *aiService) CheckGrammar(ctx context.Context, userID, docID uuid.UUID) (*groq.GrammarCheckResponse, error) {
-	text, err := s.getDocumentText(ctx, userID, docID, 15000)
+	text, err := s.getDocumentText(ctx, userID, docID, 60000)
 	if err != nil {
 		return nil, err
 	}

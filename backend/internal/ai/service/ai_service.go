@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"os"
+	"sort"
 	"strings"
 	"sync"
 	"time"
@@ -427,7 +428,37 @@ func (s *aiService) Summarize(ctx context.Context, userID, docID uuid.UUID) (*gr
 	if doc.AiSummary != "" {
 		return &groq.SummaryResponse{Summary: doc.AiSummary, KeyPoints: []string{}, WordCount: doc.WordCount}, nil
 	}
-	return s.groqClient.Summarize(ctx, truncate(doc.OcrText, 60000))
+	return s.summarizeFull(ctx, doc.OcrText)
+}
+
+// summarizeFull covers documents of any length: one that already fits a
+// single request is summarized directly; a longer one is map/reduced —
+// each chunk summarized in parallel, then those partial summaries are
+// summarized once more into a single coherent whole-document summary —
+// so the result reflects the ENTIRE document instead of just however much
+// fit under a single truncation cap.
+func (s *aiService) summarizeFull(ctx context.Context, text string) (*groq.SummaryResponse, error) {
+	chunks := chunkDocumentText(text)
+	if len(chunks) == 1 {
+		return s.groqClient.Summarize(ctx, chunks[0])
+	}
+
+	partials := make([]string, len(chunks))
+	var wg sync.WaitGroup
+	wg.Add(len(chunks))
+	for i, chunk := range chunks {
+		go func(i int, chunk string) {
+			defer wg.Done()
+			r, err := s.groqClient.Summarize(ctx, chunk)
+			if err == nil {
+				partials[i] = r.Summary
+			}
+		}(i, chunk)
+	}
+	wg.Wait()
+
+	combined := strings.Join(partials, "\n\n")
+	return s.groqClient.Summarize(ctx, combined)
 }
 
 // SummarizeText summarizes raw text directly (used for OCR results that
@@ -438,7 +469,7 @@ func (s *aiService) SummarizeText(ctx context.Context, text string) (*groq.Summa
 	if text == "" {
 		return &groq.SummaryResponse{Summary: "", KeyPoints: []string{}, WordCount: 0}, nil
 	}
-	return s.groqClient.Summarize(ctx, truncate(text, 60000))
+	return s.summarizeFull(ctx, text)
 }
 
 func (s *aiService) AnswerQuestion(ctx context.Context, userID, docID uuid.UUID, question string) (*groq.QAResponse, error) {
@@ -619,11 +650,34 @@ func (s *aiService) ExtractKeyPoints(ctx context.Context, userID, docID uuid.UUI
 	if doc.AiKeyPoints != "" {
 		return strings.Split(doc.AiKeyPoints, "\n"), nil
 	}
-	result, err := s.groqClient.ExtractKeyPoints(ctx, truncate(doc.OcrText, 60000))
-	if err != nil {
-		return nil, err
+
+	chunks := chunkDocumentText(doc.OcrText)
+	if len(chunks) == 1 {
+		result, err := s.groqClient.ExtractKeyPoints(ctx, chunks[0])
+		if err != nil {
+			return nil, err
+		}
+		return result.KeyPoints, nil
 	}
-	return result.KeyPoints, nil
+
+	var mu sync.Mutex
+	var all []string
+	var wg sync.WaitGroup
+	wg.Add(len(chunks))
+	for _, chunk := range chunks {
+		go func(chunk string) {
+			defer wg.Done()
+			r, err := s.groqClient.ExtractKeyPoints(ctx, chunk)
+			if err != nil {
+				return
+			}
+			mu.Lock()
+			all = append(all, r.KeyPoints...)
+			mu.Unlock()
+		}(chunk)
+	}
+	wg.Wait()
+	return dedupeStrings(all), nil
 }
 
 func (s *aiService) ExtractTimeline(ctx context.Context, userID, docID uuid.UUID) (*groq.TimelineResponse, error) {
@@ -646,7 +700,31 @@ func (s *aiService) ExtractTimeline(ctx context.Context, userID, docID uuid.UUID
 		}
 		return &groq.TimelineResponse{Events: events}, nil
 	}
-	return s.groqClient.ExtractTimeline(ctx, truncate(doc.OcrText, 60000))
+
+	chunks := chunkDocumentText(doc.OcrText)
+	if len(chunks) == 1 {
+		return s.groqClient.ExtractTimeline(ctx, chunks[0])
+	}
+
+	var mu sync.Mutex
+	var allEvents []groq.TimelineEvent
+	var wg sync.WaitGroup
+	wg.Add(len(chunks))
+	for _, chunk := range chunks {
+		go func(chunk string) {
+			defer wg.Done()
+			r, err := s.groqClient.ExtractTimeline(ctx, chunk)
+			if err != nil {
+				return
+			}
+			mu.Lock()
+			allEvents = append(allEvents, r.Events...)
+			mu.Unlock()
+		}(chunk)
+	}
+	wg.Wait()
+	groq.SortTimelineEvents(allEvents)
+	return &groq.TimelineResponse{Events: allEvents}, nil
 }
 
 func (s *aiService) ExtractActionItems(ctx context.Context, userID, docID uuid.UUID) ([]string, error) {
@@ -657,15 +735,40 @@ func (s *aiService) ExtractActionItems(ctx context.Context, userID, docID uuid.U
 	if doc.AiActionItems != "" {
 		return strings.Split(doc.AiActionItems, "\n"), nil
 	}
-	result, err := s.groqClient.ExtractActionItems(ctx, truncate(doc.OcrText, 60000))
-	if err != nil {
-		return nil, err
+
+	chunks := chunkDocumentText(doc.OcrText)
+	if len(chunks) == 1 {
+		result, err := s.groqClient.ExtractActionItems(ctx, chunks[0])
+		if err != nil {
+			return nil, err
+		}
+		items := make([]string, len(result.ActionItems))
+		for i, a := range result.ActionItems {
+			items[i] = a.Action
+		}
+		return items, nil
 	}
-	items := make([]string, len(result.ActionItems))
-	for i, a := range result.ActionItems {
-		items[i] = a.Action
+
+	var mu sync.Mutex
+	var all []string
+	var wg sync.WaitGroup
+	wg.Add(len(chunks))
+	for _, chunk := range chunks {
+		go func(chunk string) {
+			defer wg.Done()
+			r, err := s.groqClient.ExtractActionItems(ctx, chunk)
+			if err != nil {
+				return
+			}
+			mu.Lock()
+			for _, a := range r.ActionItems {
+				all = append(all, a.Action)
+			}
+			mu.Unlock()
+		}(chunk)
 	}
-	return items, nil
+	wg.Wait()
+	return dedupeStrings(all), nil
 }
 
 func (s *aiService) AnalyzeDocument(ctx context.Context, userID, docID uuid.UUID) (*groq.AnalysisResponse, error) {
@@ -704,27 +807,130 @@ func (s *aiService) GenerateReport(ctx context.Context, userID, docID uuid.UUID,
 }
 
 func (s *aiService) ExtractCitations(ctx context.Context, userID, docID uuid.UUID) (*groq.CitationsResponse, error) {
-	text, err := s.getDocumentText(ctx, userID, docID, 60000)
+	text, err := s.getDocumentText(ctx, userID, docID, 0) // unbounded — chunked below
 	if err != nil {
 		return nil, err
 	}
-	return s.groqClient.ExtractCitations(ctx, text)
+	chunks := chunkDocumentText(text)
+	if len(chunks) == 1 {
+		return s.groqClient.ExtractCitations(ctx, chunks[0])
+	}
+
+	var mu sync.Mutex
+	merged := &groq.CitationsResponse{}
+	var wg sync.WaitGroup
+	wg.Add(len(chunks))
+	for _, chunk := range chunks {
+		go func(chunk string) {
+			defer wg.Done()
+			r, err := s.groqClient.ExtractCitations(ctx, chunk)
+			if err != nil {
+				return
+			}
+			mu.Lock()
+			merged.Cases = append(merged.Cases, r.Cases...)
+			merged.Sections = append(merged.Sections, r.Sections...)
+			merged.Acts = append(merged.Acts, r.Acts...)
+			merged.Articles = append(merged.Articles, r.Articles...)
+			merged.Rules = append(merged.Rules, r.Rules...)
+			mu.Unlock()
+		}(chunk)
+	}
+	wg.Wait()
+	merged.Cases = dedupeStrings(merged.Cases)
+	merged.Sections = dedupeStrings(merged.Sections)
+	merged.Acts = dedupeStrings(merged.Acts)
+	merged.Articles = dedupeStrings(merged.Articles)
+	merged.Rules = dedupeStrings(merged.Rules)
+	return merged, nil
+}
+
+// riskSeverity ranks risk levels so merged results can report the single
+// highest severity found across every chunk of a long document.
+func riskSeverity(level string) int {
+	switch strings.ToLower(level) {
+	case "high":
+		return 3
+	case "medium":
+		return 2
+	case "low":
+		return 1
+	default:
+		return 0
+	}
 }
 
 func (s *aiService) ScanRisks(ctx context.Context, userID, docID uuid.UUID) (*groq.RiskScanResponse, error) {
-	text, err := s.getDocumentText(ctx, userID, docID, 60000)
+	text, err := s.getDocumentText(ctx, userID, docID, 0)
 	if err != nil {
 		return nil, err
 	}
-	return s.groqClient.ScanRisks(ctx, text)
+	chunks := chunkDocumentText(text)
+	if len(chunks) == 1 {
+		return s.groqClient.ScanRisks(ctx, chunks[0])
+	}
+
+	var mu sync.Mutex
+	var allClauses []groq.RiskClause
+	overall := "low"
+	var wg sync.WaitGroup
+	wg.Add(len(chunks))
+	for _, chunk := range chunks {
+		go func(chunk string) {
+			defer wg.Done()
+			r, err := s.groqClient.ScanRisks(ctx, chunk)
+			if err != nil {
+				return
+			}
+			mu.Lock()
+			allClauses = append(allClauses, r.Clauses...)
+			if riskSeverity(r.OverallRisk) > riskSeverity(overall) {
+				overall = r.OverallRisk
+			}
+			mu.Unlock()
+		}(chunk)
+	}
+	wg.Wait()
+	// Highest-severity clauses first, capped to the same "up to 8" the
+	// single-chunk prompt asks for, so a long document doesn't return an
+	// unbounded pile of low-priority findings.
+	sort.SliceStable(allClauses, func(i, j int) bool {
+		return riskSeverity(allClauses[i].RiskLevel) > riskSeverity(allClauses[j].RiskLevel)
+	})
+	if len(allClauses) > 8 {
+		allClauses = allClauses[:8]
+	}
+	return &groq.RiskScanResponse{OverallRisk: overall, Clauses: allClauses}, nil
 }
 
 func (s *aiService) ExtractDeadlines(ctx context.Context, userID, docID uuid.UUID) (*groq.DeadlineResponse, error) {
-	text, err := s.getDocumentText(ctx, userID, docID, 60000)
+	text, err := s.getDocumentText(ctx, userID, docID, 0)
 	if err != nil {
 		return nil, err
 	}
-	return s.groqClient.ExtractDeadlines(ctx, text)
+	chunks := chunkDocumentText(text)
+	if len(chunks) == 1 {
+		return s.groqClient.ExtractDeadlines(ctx, chunks[0])
+	}
+
+	var mu sync.Mutex
+	var all []groq.Deadline
+	var wg sync.WaitGroup
+	wg.Add(len(chunks))
+	for _, chunk := range chunks {
+		go func(chunk string) {
+			defer wg.Done()
+			r, err := s.groqClient.ExtractDeadlines(ctx, chunk)
+			if err != nil {
+				return
+			}
+			mu.Lock()
+			all = append(all, r.Deadlines...)
+			mu.Unlock()
+		}(chunk)
+	}
+	wg.Wait()
+	return &groq.DeadlineResponse{Deadlines: all}, nil
 }
 
 func (s *aiService) AutoTag(ctx context.Context, userID, docID uuid.UUID) (*groq.AutoTagsResponse, error) {
@@ -902,6 +1108,39 @@ func truncate(text string, maxChars int) string {
 		return t[:idx+1]
 	}
 	return t
+}
+
+// chunkChars is the per-request budget used when map/reduce-ing a long
+// document across multiple AI calls (see chunkDocumentText). Comfortably
+// within Claude's context window per chunk.
+const chunkChars = 50000
+
+// chunkDocumentText splits text for map/reduce processing: a document that
+// already fits in one request is returned as a single "chunk" (the normal,
+// fast path), so only genuinely long documents pay for extra AI calls.
+func chunkDocumentText(text string) []string {
+	if len(text) <= chunkChars {
+		return []string{text}
+	}
+	return groq.SplitIntoChunks(text, chunkChars)
+}
+
+// dedupeStrings removes duplicate entries (case/whitespace-insensitive)
+// while preserving first-seen order — used when merging extraction results
+// (key points, citations, …) from multiple document chunks, since the same
+// item can legitimately be re-mentioned near a chunk boundary.
+func dedupeStrings(items []string) []string {
+	seen := make(map[string]bool, len(items))
+	out := make([]string, 0, len(items))
+	for _, item := range items {
+		key := strings.ToLower(strings.TrimSpace(item))
+		if key == "" || seen[key] {
+			continue
+		}
+		seen[key] = true
+		out = append(out, item)
+	}
+	return out
 }
 
 

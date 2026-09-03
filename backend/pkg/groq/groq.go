@@ -924,6 +924,21 @@ func (c *Client) Translate(ctx context.Context, text, targetLanguage string) (*T
 	return c.TranslateDocument(ctx, text, targetLanguage)
 }
 
+// SplitIntoChunks exposes splitIntoChunks to other packages — the service
+// layer uses it to map/reduce a very long document across several AI calls
+// (rather than truncating it) for full-document coverage on features like
+// Summarize, Key Points, Citations, Risk Scan, and Deadlines.
+func SplitIntoChunks(text string, maxChars int) []string {
+	return splitIntoChunks(text, maxChars)
+}
+
+// SortTimelineEvents exposes sortTimelineEvents so the service layer can
+// re-sort a timeline after merging events extracted from multiple chunks
+// of a long document.
+func SortTimelineEvents(events []TimelineEvent) {
+	sortTimelineEvents(events)
+}
+
 func (c *Client) AnswerQuestion(ctx context.Context, text, question string) (*QAResponse, error) {
 	system := `You are a document Q&A assistant. Answer based only on the provided document. Always respond with valid JSON only, no markdown.` + indiaDocEngRule
 	prompt := fmt.Sprintf(`Answer this question based on the document. Respond ONLY with this JSON:

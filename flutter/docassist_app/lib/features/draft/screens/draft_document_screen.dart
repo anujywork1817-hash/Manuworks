@@ -1815,6 +1815,76 @@ const kDraftPromptTemplates = [
     'arbitrability of disputes, non-signatory issues, waiver arguments, '
     'and judicial precedents governing referral to arbitration.',
   ),
+  _PromptTemplate(
+    'Arbitrator Appointment', 'Alternative Dispute Resolution',
+    'Develop a strategy for appointment or challenge of an arbitrator. '
+    'Analyse independence, impartiality, disclosures under the Fifth and '
+    'Seventh Schedules, subject-matter expertise, potential conflicts of '
+    'interest, appointment procedures, and grounds for challenge under '
+    'Indian arbitration law.',
+  ),
+  _PromptTemplate(
+    'Section 9 Interim Relief Strategy', 'Alternative Dispute Resolution',
+    'Assess the viability of seeking interim measures under Section 9 of '
+    'the Arbitration and Conciliation Act, 1996. Analyse urgency, prima '
+    'facie case, balance of convenience, asset preservation requirements, '
+    'injunction standards, evidentiary support, and enforcement '
+    'considerations. Recommend the strongest reliefs to seek.',
+  ),
+  _PromptTemplate(
+    'Statement of Claim Preparation', 'Alternative Dispute Resolution',
+    'Prepare a framework for a Statement of Claim in arbitration. '
+    'Identify causes of action, contractual breaches, factual chronology, '
+    'documentary evidence, witness requirements, damages methodology, '
+    'interest claims, jurisdictional basis, and reliefs sought. Ensure '
+    'alignment with applicable procedural rules.',
+  ),
+  _PromptTemplate(
+    'Arbitral Award Enforcement', 'Alternative Dispute Resolution',
+    'Assess the enforceability of the arbitral award in India. Analyse '
+    'limitation issues, stay applications, asset tracing considerations, '
+    'enforcement risks, jurisdictional requirements, and procedural '
+    'mechanisms available for execution and recovery.',
+  ),
+  _PromptTemplate(
+    'Mediation Suitability', 'Alternative Dispute Resolution',
+    'Assess whether the dispute is suitable for mediation under the '
+    'Mediation Act, 2023. Analyse commercial interests, relationship '
+    'dynamics, litigation risks, settlement opportunities, '
+    'confidentiality considerations, enforceability concerns, and '
+    'likelihood of successful resolution.',
+  ),
+  _PromptTemplate(
+    'Conciliation Strategy', 'Alternative Dispute Resolution',
+    'Assess the viability of conciliation under Part III of the '
+    'Arbitration and Conciliation Act, 1996. Analyse procedural '
+    'requirements, confidentiality protections, settlement prospects, '
+    'enforceability of settlement agreements, and strategic advantages '
+    'compared to litigation or arbitration.',
+  ),
+  _PromptTemplate(
+    'Pre-Arbitration Negotiation Strategy', 'Alternative Dispute Resolution',
+    'Develop a structured negotiation strategy before commencement of '
+    'arbitration. Analyse leverage points, legal exposure, commercial '
+    'considerations, settlement valuation, negotiation sequencing, and '
+    'documentation requirements. Recommend a roadmap to maximise early '
+    'resolution opportunities.',
+  ),
+  _PromptTemplate(
+    'Arbitral Institution Assessment', 'Alternative Dispute Resolution',
+    'Compare institutional arbitration options such as MCIA, DIAC, ICA, '
+    'SIAC, LCIA, ICC, and other relevant institutions. Analyse costs, '
+    'timelines, procedural flexibility, emergency arbitration provisions, '
+    'enforceability considerations, and suitability for the specific '
+    'dispute.',
+  ),
+  _PromptTemplate(
+    'Online Dispute Resolution (ODR) Framework', 'Alternative Dispute Resolution',
+    'Assess the suitability of online dispute resolution mechanisms for '
+    'the dispute. Analyse legal enforceability, technology requirements, '
+    'confidentiality safeguards, procedural fairness, cost efficiency, '
+    'and integration with existing ADR frameworks.',
+  ),
 ];
 
 // ─── Screen ───────────────────────────────────────────────────────────────────
